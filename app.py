@@ -376,10 +376,20 @@ class Frame:
     label: str        # short description e.g. "White places ring at E4"
 
 
-def replay_game(parsed: ParsedGame) -> list[Frame]:
-    """Replay all moves, capturing a Frame after every move."""
+@dataclass
+class GameResult:
+    white_rings: int   # rings removed by white (= white's score)
+    black_rings: int   # rings removed by black
+    winner: str        # Color.WHITE / Color.BLACK / "draw" / ""
+
+
+def replay_game(parsed: ParsedGame) -> tuple[list[Frame], GameResult]:
+    """Replay all moves, capturing a Frame after every move.
+    Returns (frames, result)."""
     board = BoardState()
     frames: list[Frame] = []
+    white_rings_removed = 0
+    black_rings_removed = 0
 
     # Initial empty board
     frames.append(Frame(
@@ -419,6 +429,10 @@ def replay_game(parsed: ParsedGame) -> list[Frame]:
             board.remove_ring(move.coord, move.color)
             highlight.add(move.coord)
             label = f"{move.color.capitalize()} removes ring at {xy_to_bga(*move.coord)}"
+            if move.color == Color.WHITE:
+                white_rings_removed += 1
+            else:
+                black_rings_removed += 1
 
         else:
             label = "Unknown move"
@@ -431,7 +445,21 @@ def replay_game(parsed: ParsedGame) -> list[Frame]:
             label=label,
         ))
 
-    return frames
+    if white_rings_removed > black_rings_removed:
+        winner = Color.WHITE
+    elif black_rings_removed > white_rings_removed:
+        winner = Color.BLACK
+    elif white_rings_removed > 0:
+        winner = "draw"
+    else:
+        winner = ""
+
+    result = GameResult(
+        white_rings=white_rings_removed,
+        black_rings=black_rings_removed,
+        winner=winner,
+    )
+    return frames, result
 
 
 # ---------------------------------------------------------------------------
@@ -756,24 +784,33 @@ def main() -> None:
                     st.error("No moves were parsed. Check the log format.")
                     return
 
-                frames = replay_game(parsed)
+                frames, result = replay_game(parsed)
 
                 if not show_start:
                     frames = frames[1:]  # drop the empty initial board
 
-                # Build title: "White vs Black  |  date – date"
+                white_name = next((n for n, c in parsed.player_map.items() if c == Color.WHITE), "White")
+                black_name = next((n for n, c in parsed.player_map.items() if c == Color.BLACK), "Black")
+
+                # Info bar
                 if parsed.player_map:
                     names = ", ".join(f"{n} = {c}" for n, c in parsed.player_map.items())
                     st.info(f"Players: {names}  |  {len(parsed.moves)} moves parsed")
 
-                white_name = next((n for n, c in parsed.player_map.items() if c == Color.WHITE), "White")
-                black_name = next((n for n, c in parsed.player_map.items() if c == Color.BLACK), "Black")
+                # Title: "White (2) vs Black (3)  |  date – date  |  White wins"
                 first_date = parsed.metadata.get("first_date", "")
                 last_date  = parsed.metadata.get("last_date", "")
                 date_str   = first_date if first_date == last_date else f"{first_date} – {last_date}"
-                title = f"{white_name}  vs  {black_name}"
+
+                title = f"{white_name} ({result.white_rings})  vs  {black_name} ({result.black_rings})"
                 if date_str:
                     title += f"   |   {date_str}"
+                if result.winner == Color.WHITE:
+                    title += f"   |   {white_name} wins"
+                elif result.winner == Color.BLACK:
+                    title += f"   |   {black_name} wins"
+                elif result.winner == "draw":
+                    title += "   |   Draw"
 
                 sheet = build_sheet(frames, spacing=cell_size, cols=cols, title=title)
 
