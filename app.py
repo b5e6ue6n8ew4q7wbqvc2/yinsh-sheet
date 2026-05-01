@@ -474,15 +474,18 @@ def render_board(frame: Frame, spacing: int = 28) -> Image.Image:
     min_x, max_x = min(xs), max(xs)
     min_y, max_y = min(ys), max(ys)
 
-    label_pad_left = int(spacing * 1.6)
-    label_pad_top  = int(spacing * 1.4)
-    pad            = int(spacing * 0.9)
+    # Padding: row numbers left only, column letters below only.
+    # Add matching right/top margins so the board grid is visually centred.
+    margin         = int(spacing * 0.6)   # small gap on all sides
+    label_pad_left = int(spacing * 1.5)   # extra for row number labels
+    label_pad_bot  = int(spacing * 1.2)   # extra for column letter labels
 
-    ox = -min_x + pad + label_pad_left   # pixel offset to apply to all coords
-    oy = -min_y + pad + label_pad_top
+    # Mirror the label pads on the opposite sides so the grid is centred
+    ox = -min_x + margin + label_pad_left
+    oy = -min_y + margin
 
-    img_w = int(max_x - min_x + 2 * pad + label_pad_left)
-    img_h = int(max_y - min_y + 2 * pad + label_pad_top)
+    img_w = int(max_x - min_x + 2 * margin + label_pad_left + label_pad_left)
+    img_h = int(max_y - min_y + 2 * margin + label_pad_bot)
 
     img  = Image.new("RGB", (img_w, img_h), BOARD_BG)
     draw = ImageDraw.Draw(img)
@@ -572,29 +575,24 @@ def render_board(frame: Frame, spacing: int = 28) -> Image.Image:
     label_col  = "#444444"
 
     # Letters A–K: below the bottommost node of each x+y diagonal
-    # In the upright board, "bottom" = largest pixel-y = smallest engine y in that diagonal
     for d in range(5, 16):
         diag = [(x, y) for (x, y) in VALID_CELLS if x + y == d]
         if not diag:
             continue
-        # bottommost pixel = largest py = smallest engine y (since py = (x-y)*spacing/2,
-        # and for a diagonal x+y=const, smaller y means larger x means larger x-y)
         bottom = max(diag, key=lambda p: nodes[p][1])
         px, py = nodes[bottom]
         letter = chr(ord("A") + d - 5)
-        draw.text((px + ox, py + oy + spacing * 0.9), letter,
+        draw.text((px + ox, py + oy + spacing * 0.85), letter,
                   fill=label_col, font=font_label, anchor="mm")
 
-    # Numbers 1–11: along the left diagonal edge.
-    # In the upright board the left edge consists of the leftmost node (smallest pixel-x)
-    # for each engine-y row. Number = y+1.
+    # Numbers 1–11: left of the leftmost node in each engine-y row
     for y in range(11):
         row_nodes = [(x, y) for x in range(11) if (x, y) in VALID_CELLS]
         if not row_nodes:
             continue
         leftmost = min(row_nodes, key=lambda p: nodes[p][0])
         px, py = nodes[leftmost]
-        draw.text((px + ox - spacing * 0.9, py + oy), str(y + 1),
+        draw.text((px + ox - spacing * 0.85, py + oy), str(y + 1),
                   fill=label_col, font=font_label, anchor="mm")
 
     return img
@@ -622,7 +620,7 @@ def _draw_ring(draw: ImageDraw.ImageDraw,
 def build_sheet(frames: list[Frame],
                 spacing: int = 22,
                 cols: Optional[int] = None,
-                caption_height: int = 22) -> Image.Image:
+                caption_height: int = 20) -> Image.Image:
     """Render all frames and tile them into a single PNG sheet."""
     if not frames:
         raise ValueError("No frames to render")
@@ -636,28 +634,53 @@ def build_sheet(frames: list[Frame],
         cols = max(1, min(cols, n))
     rows = math.ceil(n / cols)
 
-    sheet_w = cols * bw
-    sheet_h = rows * (bh + caption_height)
-    sheet = Image.new("RGB", (sheet_w, sheet_h), "#F0E8D0")
-    draw = ImageDraw.Draw(sheet)
+    border    = 2                          # border thickness in px
+    cell_w    = bw + border * 2
+    cell_h    = bh + caption_height + border * 2
+    gap       = 4                          # gap between cells
+    sheet_w   = cols * cell_w + (cols - 1) * gap + gap * 2
+    sheet_h   = rows * cell_h + (rows - 1) * gap + gap * 2
 
-    try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                                  max(9, caption_height - 4))
-    except Exception:
-        font = ImageFont.load_default()
+    sheet = Image.new("RGB", (sheet_w, sheet_h), BOARD_BG)
+    draw  = ImageDraw.Draw(sheet)
+
+    font_sz = max(8, caption_height - 4)
+    font    = _load_font(font_sz)
 
     for idx, (img, frame) in enumerate(zip(board_imgs, frames)):
         col = idx % cols
         row = idx // cols
-        x0 = col * bw
-        y0 = row * (bh + caption_height)
-        sheet.paste(img, (x0, y0))
+
+        # top-left of the cell (border + board + caption)
+        x0 = gap + col * (cell_w + gap)
+        y0 = gap + row * (cell_h + gap)
+
+        # draw border rect
+        draw.rectangle(
+            [x0, y0, x0 + cell_w - 1, y0 + cell_h - 1],
+            outline="#888880", width=border,
+        )
+
+        # paste board image inside the border
+        sheet.paste(img, (x0 + border, y0 + border))
+
+        # caption strip (same grey as sheet, sits flush below the board)
+        cap_y0 = y0 + border + bh
+        cap_y1 = y0 + cell_h - border
+        draw.rectangle(
+            [x0 + border, cap_y0, x0 + cell_w - border - 1, cap_y1],
+            fill=BOARD_BG,
+        )
+        # thin separator line between board and caption
+        draw.line(
+            [(x0 + border, cap_y0), (x0 + cell_w - border - 1, cap_y0)],
+            fill="#888880", width=1,
+        )
 
         caption = f"#{frame.move_index}  {frame.label}"
         draw.text(
-            (x0 + bw // 2, y0 + bh + caption_height // 2),
-            caption, fill="#333333", font=font, anchor="mm",
+            (x0 + cell_w // 2, cap_y0 + caption_height // 2),
+            caption, fill="#222222", font=font, anchor="mm",
         )
 
     return sheet
