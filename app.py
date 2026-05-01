@@ -256,6 +256,9 @@ class ParsedGame:
     metadata: dict[str, str]
 
 
+_DATE_IN_HEADER = re.compile(r"Move\s+\d+\s*:\s*(\d+/\d+/\d+)", re.IGNORECASE)
+
+
 def parse_bga_log(text: str) -> ParsedGame:
     """
     Parse a BGA Yinsh play log into a list of Move objects.
@@ -271,6 +274,10 @@ def parse_bga_log(text: str) -> ParsedGame:
     metadata: dict[str, str] = {}
     moves: list[Move] = []
 
+    # Track first and last date seen in Move headers
+    first_date: Optional[str] = None
+    last_date:  Optional[str] = None
+
     _IGNORE = re.compile(
         r"has removed \d+ ring|End of game|^Move\s+\d+\s*:",
         re.IGNORECASE
@@ -281,6 +288,12 @@ def parse_bga_log(text: str) -> ParsedGame:
         if not line:
             continue
         if _MOVE_HDR.match(line):
+            dm = _DATE_IN_HEADER.match(line)
+            if dm:
+                d = dm.group(1)
+                if first_date is None:
+                    first_date = d
+                last_date = d
             continue
 
         parts = line.split(" ", 1)
@@ -340,6 +353,11 @@ def parse_bga_log(text: str) -> ParsedGame:
 
     # Strip _PlaceMarker sentinels — move_ring() places the marker implicitly
     moves = [m for m in moves if not isinstance(m, _PlaceMarker)]
+
+    if first_date:
+        metadata["first_date"] = first_date
+    if last_date:
+        metadata["last_date"] = last_date
 
     return ParsedGame(moves=moves, player_map=player_map, metadata=metadata)
 
@@ -620,7 +638,8 @@ def _draw_ring(draw: ImageDraw.ImageDraw,
 def build_sheet(frames: list[Frame],
                 spacing: int = 22,
                 cols: Optional[int] = None,
-                caption_height: int = 20) -> Image.Image:
+                caption_height: int = 20,
+                title: str = "") -> Image.Image:
     """Render all frames and tile them into a single PNG sheet."""
     if not frames:
         raise ValueError("No frames to render")
@@ -634,15 +653,29 @@ def build_sheet(frames: list[Frame],
         cols = max(1, min(cols, n))
     rows = math.ceil(n / cols)
 
-    border    = 2                          # border thickness in px
-    cell_w    = bw + border * 2
-    cell_h    = bh + caption_height + border * 2
-    gap       = 4                          # gap between cells
-    sheet_w   = cols * cell_w + (cols - 1) * gap + gap * 2
-    sheet_h   = rows * cell_h + (rows - 1) * gap + gap * 2
+    border       = 2
+    cell_w       = bw + border * 2
+    cell_h       = bh + caption_height + border * 2
+    gap          = 4
+    title_height = 48 if title else 0
+    sheet_w      = cols * cell_w + (cols - 1) * gap + gap * 2
+    sheet_h      = rows * cell_h + (rows - 1) * gap + gap * 2 + title_height
 
     sheet = Image.new("RGB", (sheet_w, sheet_h), BOARD_BG)
     draw  = ImageDraw.Draw(sheet)
+
+    if title:
+        title_font = _load_font(28)
+        # Draw title text centred at top
+        draw.text(
+            (sheet_w // 2, title_height // 2),
+            title, fill="#111111", font=title_font, anchor="mm",
+        )
+        # Thin separator line under the title
+        draw.line(
+            [(gap, title_height - 1), (sheet_w - gap, title_height - 1)],
+            fill="#888880", width=1,
+        )
 
     font_sz = max(8, caption_height - 4)
     font    = _load_font(font_sz)
@@ -653,7 +686,7 @@ def build_sheet(frames: list[Frame],
 
         # top-left of the cell (border + board + caption)
         x0 = gap + col * (cell_w + gap)
-        y0 = gap + row * (cell_h + gap)
+        y0 = title_height + gap + row * (cell_h + gap)
 
         # draw border rect
         draw.rectangle(
@@ -697,59 +730,8 @@ def main() -> None:
         "Paste a **Board Game Arena** Yinsh play log below, then click **Render**."
     )
 
-    default_log = """\
-Move 2 : 4/22/2026 11:20:04 PM
-HardDiggler places a ring on D5
-Move 4 : 4/23/2026 6:55:12 AM
-7h48567b4 places a ring on K10
-Move 6 : 11:34:37 AM
-HardDiggler places a ring on H7
-Move 8 : 3:35:23 PM
-7h48567b4 places a ring on J11
-Move 10 : 11:41:40 PM
-HardDiggler places a ring on G8
-Move 12 : 4/24/2026 7:14:12 AM
-7h48567b4 places a ring on K7
-Move 14 : 4/25/2026 12:04:11 AM
-HardDiggler places a ring on H5
-Move 16 : 6:56:21 AM
-7h48567b4 places a ring on J5
-Move 18 : 9:48:37 AM
-HardDiggler places a ring on E4
-Move 20 : 12:14:11 PM
-7h48567b4 places a ring on J7
-Move 22 : 1:05:18 PM
-HardDiggler places a marker on E4
-Move 23 : 1:05:22 PM
-HardDiggler moves a ring from E4 to E5
-Move 25 : 1:53:52 PM
-7h48567b4 places a marker on K10
-Move 26 : 1:53:53 PM
-7h48567b4 moves a ring from K10 to J9
-Move 28 : 11:37:17 PM
-HardDiggler places a marker on E5
-Move 29 : 11:37:21 PM
-HardDiggler moves a ring from E5 to E6
-Move 31 : 4/26/2026 6:53:26 AM
-7h48567b4 places a marker on J5
-Move 32 : 6:53:28 AM
-7h48567b4 moves a ring from J5 to J6
-Move 34 : 4/27/2026 12:21:53 AM
-HardDiggler places a marker on E6
-Move 35 : 12:21:54 AM
-HardDiggler moves a ring from E6 to E7
-Move 37 : 7:11:51 AM
-7h48567b4 places a marker on J7
-Move 38 : 7:12:00 AM
-7h48567b4 moves a ring from J7 to J8
-Move 39 : 7:12:03 AM
-7h48567b4 takes back their last move
-Move 40 : 7:12:08 AM
-7h48567b4 places a marker on J9
-Move 41 : 7:12:10 AM
-7h48567b4 moves a ring from J9 to J8"""
-
-    log_text = st.text_area("BGA play log", value=default_log, height=300)
+    log_text = st.text_area("BGA play log", value="", height=300,
+                            placeholder="Paste your BGA Yinsh play log here…")
 
     with st.sidebar:
         st.header("Options")
@@ -779,11 +761,21 @@ Move 41 : 7:12:10 AM
                 if not show_start:
                     frames = frames[1:]  # drop the empty initial board
 
+                # Build title: "White vs Black  |  date – date"
                 if parsed.player_map:
                     names = ", ".join(f"{n} = {c}" for n, c in parsed.player_map.items())
                     st.info(f"Players: {names}  |  {len(parsed.moves)} moves parsed")
 
-                sheet = build_sheet(frames, spacing=cell_size, cols=cols)
+                white_name = next((n for n, c in parsed.player_map.items() if c == Color.WHITE), "White")
+                black_name = next((n for n, c in parsed.player_map.items() if c == Color.BLACK), "Black")
+                first_date = parsed.metadata.get("first_date", "")
+                last_date  = parsed.metadata.get("last_date", "")
+                date_str   = first_date if first_date == last_date else f"{first_date} – {last_date}"
+                title = f"{white_name}  vs  {black_name}"
+                if date_str:
+                    title += f"   |   {date_str}"
+
+                sheet = build_sheet(frames, spacing=cell_size, cols=cols, title=title)
 
                 # Display inline
                 st.image(sheet, caption="Game sheet", use_container_width=True)
