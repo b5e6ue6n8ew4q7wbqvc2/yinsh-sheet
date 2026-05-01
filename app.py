@@ -42,7 +42,8 @@ LINE_COLOR      = "#383838"
 NODE_DOT_COLOR  = "#383838"
 WHITE_COLOR     = "#FFFFFF"
 BLACK_COLOR     = "#1A1A1A"
-HIGHLIGHT_COLOR = "#DD2222"   # last-moved pieces
+HIGHLIGHT_COLOR = "#DD2222"   # red: last-moved ring positions
+FLIP_COLOR      = "#FF8800"   # orange: markers flipped this move
 
 # Board line extents — from board.hpp BOARD_START_OFFSET / BOARD_END_OFFSET
 # Index is x (for x-const lines) or y (for y-const lines)
@@ -121,8 +122,9 @@ class BoardState:
 
     # --- move phase ---
 
-    def move_ring(self, frm: tuple[int, int], to: tuple[int, int], color: str) -> None:
-        """Apply a ring move: leave marker at frm, flip markers on the way, place ring at to."""
+    def move_ring(self, frm: tuple[int, int], to: tuple[int, int], color: str) -> set[tuple[int, int]]:
+        """Apply a ring move: leave marker at frm, flip markers on the way, place ring at to.
+        Returns the set of cells whose markers were flipped."""
         rings = self.white_rings if color == Color.WHITE else self.black_rings
         markers_own = self.white_markers if color == Color.WHITE else self.black_markers
         markers_opp = self.black_markers if color == Color.WHITE else self.white_markers
@@ -136,15 +138,19 @@ class BoardState:
 
         # flip markers strictly between frm and to
         between = self._cells_between(frm, to)
+        flipped: set[tuple[int, int]] = set()
         for cell in between:
             if cell in markers_own:
                 markers_own.discard(cell)
                 markers_opp.add(cell)
+                flipped.add(cell)
             elif cell in markers_opp:
                 markers_opp.discard(cell)
                 markers_own.add(cell)
+                flipped.add(cell)
 
         self.turn = Color.opposite(color)
+        return flipped
 
     @staticmethod
     def _cells_between(frm: tuple[int, int], to: tuple[int, int]) -> list[tuple[int, int]]:
@@ -209,7 +215,14 @@ class RemoveRing:
     coord: tuple[int, int]
     color: str
 
-Move = PlaceRing | MoveRing | RemoveRow | RemoveRing
+@dataclass
+class _PlaceMarker:
+    """Internal sentinel — BGA logs marker placement as a separate undoable step.
+    Stripped from the move list before replay; move_ring() places the marker implicitly."""
+    coord: tuple[int, int]
+    color: str
+
+Move = PlaceRing | MoveRing | RemoveRow | RemoveRing | _PlaceMarker
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +235,7 @@ _PLACE_RING   = re.compile(r"places a ring on ([A-K]\d{1,2})", re.IGNORECASE)
 _PLACE_MARKER = re.compile(r"places a marker on ([A-K]\d{1,2})", re.IGNORECASE)
 _MOVE_RING    = re.compile(r"moves a ring from ([A-K]\d{1,2}) to ([A-K]\d{1,2})", re.IGNORECASE)
 _TAKES_BACK   = re.compile(r"takes back their last move", re.IGNORECASE)
-_REMOVE_ROW   = re.compile(r"removes? (?:a )?row from ([A-K]\d{1,2}) to ([A-K]\d{1,2})", re.IGNORECASE)
+_REMOVE_ROW   = re.compile(r"removes? (?:a )?row (?:of markers )?from ([A-K]\d{1,2}) to ([A-K]\d{1,2})", re.IGNORECASE)
 _REMOVE_RING  = re.compile(r"removes? (?:a )?ring (?:from|on|at) ([A-K]\d{1,2})", re.IGNORECASE)
 
 
@@ -246,18 +259,22 @@ class ParsedGame:
 def parse_bga_log(text: str) -> ParsedGame:
     """
     Parse a BGA Yinsh play log into a list of Move objects.
-    Handles 'takes back their last move' by discarding the preceding pending move.
+
+    BGA logs each game-move as 2 lines: "places a marker on X" then "moves a ring from X to Y".
+    BGA also logs RemoveRow and RemoveRing as separate lines.
+    Each of these BGA lines is one undoable step, so we keep them all separate in the moves list.
+
+    'takes back their last move' pops the most recently added move.
     """
     lines = text.strip().splitlines()
     player_map: dict[str, str] = {}
     metadata: dict[str, str] = {}
     moves: list[Move] = []
 
-    # We need to pair up (place marker, move ring) into a single MoveRing.
-    # BGA logs them as two consecutive lines.
-    pending_marker: Optional[tuple[tuple[int,int], str]] = None  # (coord, player_name)
-    # For undo: track the last confirmed move so we can pop it.
-    # 'takes back their last move' undoes the *pending* marker+ring pair.
+    _IGNORE = re.compile(
+        r"has removed \d+ ring|End of game|^Move\s+\d+\s*:",
+        re.IGNORECASE
+    )
 
     for line in lines:
         line = line.strip()
@@ -266,20 +283,17 @@ def parse_bga_log(text: str) -> ParsedGame:
         if _MOVE_HDR.match(line):
             continue
 
-        # Extract player name: lines look like "<PlayerName> does something"
-        # (unless it's a metadata line)
         parts = line.split(" ", 1)
         if len(parts) < 2:
             continue
         player_name, rest = parts[0], parts[1]
 
+        # Skip informational lines
+        if _IGNORE.search(rest) or _IGNORE.search(line):
+            continue
+
         if _TAKES_BACK.search(rest):
-            # Undo: the pending marker hasn't been committed yet because we wait
-            # for the matching ring-move line.  If there IS a pending marker, just
-            # drop it.  If not, pop the last committed move.
-            if pending_marker is not None:
-                pending_marker = None
-            elif moves:
+            if moves:
                 moves.pop()
             continue
 
@@ -292,9 +306,13 @@ def parse_bga_log(text: str) -> ParsedGame:
 
         m = _PLACE_MARKER.search(rest)
         if m:
+            # Marker placement is a separate undoable step — store it.
+            # At replay time, move_ring() will place the marker automatically,
+            # so we just track this as a no-op sentinel by storing it as a
+            # PlaceRing with color info (we use a dedicated type below).
             coord = bga_to_xy(m.group(1))
-            # Don't emit yet; wait for the ring-move line
-            pending_marker = (coord, player_name)
+            color = _name_to_color(player_name, player_map)
+            moves.append(_PlaceMarker(coord=coord, color=color))
             continue
 
         m = _MOVE_RING.search(rest)
@@ -302,12 +320,6 @@ def parse_bga_log(text: str) -> ParsedGame:
             frm = bga_to_xy(m.group(1))
             to  = bga_to_xy(m.group(2))
             color = _name_to_color(player_name, player_map)
-            if pending_marker is not None:
-                # Sanity: frm should match where the marker was placed
-                assert frm == pending_marker[0], (
-                    f"Marker at {pending_marker[0]} but ring moved from {frm}"
-                )
-                pending_marker = None
             moves.append(MoveRing(frm=frm, to=to, color=color))
             continue
 
@@ -326,6 +338,9 @@ def parse_bga_log(text: str) -> ParsedGame:
             moves.append(RemoveRing(coord=coord, color=color))
             continue
 
+    # Strip _PlaceMarker sentinels — move_ring() places the marker implicitly
+    moves = [m for m in moves if not isinstance(m, _PlaceMarker)]
+
     return ParsedGame(moves=moves, player_map=player_map, metadata=metadata)
 
 
@@ -337,7 +352,8 @@ def parse_bga_log(text: str) -> ParsedGame:
 class Frame:
     """A rendered snapshot: the board state plus which cells to highlight."""
     board: BoardState
-    highlight: set[tuple[int, int]]
+    highlight: set[tuple[int, int]]   # red: moved ring positions
+    flipped: set[tuple[int, int]]     # orange: markers flipped this move
     move_index: int   # 1-based move number shown in caption
     label: str        # short description e.g. "White places ring at E4"
 
@@ -351,12 +367,14 @@ def replay_game(parsed: ParsedGame) -> list[Frame]:
     frames.append(Frame(
         board=board.copy(),
         highlight=set(),
+        flipped=set(),
         move_index=0,
         label="Start",
     ))
 
     for i, move in enumerate(parsed.moves, start=1):
         highlight: set[tuple[int, int]] = set()
+        flipped:   set[tuple[int, int]] = set()
 
         if isinstance(move, PlaceRing):
             board.place_ring(move.coord, move.color)
@@ -364,7 +382,7 @@ def replay_game(parsed: ParsedGame) -> list[Frame]:
             label = f"{move.color.capitalize()} places ring at {xy_to_bga(*move.coord)}"
 
         elif isinstance(move, MoveRing):
-            board.move_ring(move.frm, move.to, move.color)
+            flipped = board.move_ring(move.frm, move.to, move.color)
             highlight.add(move.frm)   # marker left behind
             highlight.add(move.to)    # ring's new position
             label = (f"{move.color.capitalize()} moves ring "
@@ -372,7 +390,6 @@ def replay_game(parsed: ParsedGame) -> list[Frame]:
 
         elif isinstance(move, RemoveRow):
             board.remove_row(move.frm, move.to, move.color)
-            # highlight the removed row cells
             cells = ([move.frm]
                      + BoardState._cells_between(move.frm, move.to)
                      + [move.to])
@@ -391,6 +408,7 @@ def replay_game(parsed: ParsedGame) -> list[Frame]:
         frames.append(Frame(
             board=board.copy(),
             highlight=highlight,
+            flipped=flipped,
             move_index=i,
             label=label,
         ))
@@ -399,21 +417,30 @@ def replay_game(parsed: ParsedGame) -> list[Frame]:
 
 
 # ---------------------------------------------------------------------------
-# Hex board renderer — nodes-and-lines style (matches the C++ game)
+# Hex board renderer — nodes-and-lines style, upright orientation
 # ---------------------------------------------------------------------------
 #
-# Node world positions (same formula as coords.cpp HVec2::to_world):
-#   world_x = (x + y) * (sqrt3 / 2)
-#   world_y = -(x - y) / 2          <- negated so y increases downward
+# Coordinate formula derived from the official YINSH board SVG (Wikimedia):
+#   pixel_x = (x + y - 10) * spacing    + center_x
+#   pixel_y = (x - y)      * spacing/2  + center_y
+#
+# This produces the canonical upright board:
+#   - Vertical lines (engine NE direction, x fixed)
+#   - Letters A-K along the bottom, A at left, K at right
+#   - Numbers 1-11 along the left diagonal edge
+#   - spacing = horizontal distance between adjacent diagonal columns
 
 SQRT3 = math.sqrt(3)
 
 
 def _node_pos(x: int, y: int, spacing: float) -> tuple[float, float]:
-    """Pixel position of node (x, y) with given inter-node spacing."""
-    wx = (x + y) * (SQRT3 / 2)
-    wy = -(x - y) / 2
-    return wx * spacing, wy * spacing
+    """Pixel position of node (x, y).
+    spacing: horizontal distance between adjacent diagonal columns (= 25*sqrt(3) per unit).
+    Origin is at the board centre (x=5, y=5).
+    """
+    px = (x + y - 10) * spacing
+    py = (x - y) * spacing / SQRT3
+    return px, py
 
 
 def _load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -464,33 +491,34 @@ def render_board(frame: Frame, spacing: int = 28) -> Image.Image:
 
     # --- draw lines along all 3 axis families ---
 
-    # Family 1: x = const  (NE direction, y varies)
+    # Family 1: x = const — vertical lines in the upright board (NE direction)
     for x in range(11):
-        y0, y1 = BOARD_START_OFFSET[x], BOARD_END_OFFSET[x]
-        if y0 >= y1:
+        col = [(x, y) for y in range(11) if (x, y) in VALID_CELLS]
+        if len(col) < 2:
             continue
-        px0, py0 = _node_pos(x, y0, spacing)
-        px1, py1 = _node_pos(x, y1, spacing)
+        col.sort(key=lambda p: p[1])
+        px0, py0 = _node_pos(*col[0],  spacing)
+        px1, py1 = _node_pos(*col[-1], spacing)
         draw.line([(px0 + ox, py0 + oy), (px1 + ox, py1 + oy)],
                   fill=LINE_COLOR, width=line_w)
 
-    # Family 2: y = const  (SE direction, x varies)
+    # Family 2: y = const — SE diagonal lines (bottom-left to top-right at 30°)
     for y in range(11):
-        x0, x1 = BOARD_START_OFFSET[y], BOARD_END_OFFSET[y]
-        if x0 >= x1:
+        row = [(x, y) for x in range(11) if (x, y) in VALID_CELLS]
+        if len(row) < 2:
             continue
-        px0, py0 = _node_pos(x0, y, spacing)
-        px1, py1 = _node_pos(x1, y, spacing)
+        row.sort(key=lambda p: p[0])
+        px0, py0 = _node_pos(*row[0],  spacing)
+        px1, py1 = _node_pos(*row[-1], spacing)
         draw.line([(px0 + ox, py0 + oy), (px1 + ox, py1 + oy)],
                   fill=LINE_COLOR, width=line_w)
 
-    # Family 3: x+y = const  (N direction, (-1,+1) steps)
-    # x+y ranges from 5 to 15 for valid cells (columns A–K)
+    # Family 3: x+y = const — N diagonal lines (bottom-right to top-left at 30°)
     for d in range(5, 16):
-        # collect all valid nodes on this diagonal, sorted by y
-        diag = sorted([(x, y) for (x, y) in VALID_CELLS if x + y == d], key=lambda p: p[1])
+        diag = [(x, y) for (x, y) in VALID_CELLS if x + y == d]
         if len(diag) < 2:
             continue
+        diag.sort(key=lambda p: p[0])
         px0, py0 = _node_pos(*diag[0],  spacing)
         px1, py1 = _node_pos(*diag[-1], spacing)
         draw.line([(px0 + ox, py0 + oy), (px1 + ox, py1 + oy)],
@@ -507,10 +535,12 @@ def render_board(frame: Frame, spacing: int = 28) -> Image.Image:
     ring_outer = spacing * 0.38
     ring_inner = spacing * 0.22
     marker_r   = spacing * 0.25
+    flip_lw    = max(2, int(spacing * 0.12))   # orange outline width for flipped markers
 
     for (x, y), (px, py) in nodes.items():
-        cx, cy = px + ox, py + oy
-        is_hi  = (x, y) in highlight
+        cx, cy   = px + ox, py + oy
+        is_hi    = (x, y) in highlight
+        is_flip  = (x, y) in frame.flipped
 
         if (x, y) in board.white_rings:
             _draw_ring(draw, cx, cy, ring_outer, ring_inner,
@@ -521,44 +551,51 @@ def render_board(frame: Frame, spacing: int = 28) -> Image.Image:
                        BLACK_COLOR, BLACK_COLOR, HIGHLIGHT_COLOR if is_hi else None)
 
         elif (x, y) in board.white_markers:
-            fill = HIGHLIGHT_COLOR if is_hi else WHITE_COLOR
+            fill    = HIGHLIGHT_COLOR if is_hi else WHITE_COLOR
+            outline = FLIP_COLOR if is_flip else BLACK_COLOR
+            lw      = flip_lw if is_flip else max(1, line_w)
             draw.ellipse([cx - marker_r, cy - marker_r,
                           cx + marker_r, cy + marker_r],
-                         fill=fill, outline=BLACK_COLOR, width=max(1, line_w))
+                         fill=fill, outline=outline, width=lw)
 
         elif (x, y) in board.black_markers:
-            fill = HIGHLIGHT_COLOR if is_hi else BLACK_COLOR
+            fill    = HIGHLIGHT_COLOR if is_hi else BLACK_COLOR
+            outline = FLIP_COLOR if is_flip else BLACK_COLOR
+            lw      = flip_lw if is_flip else max(1, line_w)
             draw.ellipse([cx - marker_r, cy - marker_r,
                           cx + marker_r, cy + marker_r],
-                         fill=fill, outline=BLACK_COLOR, width=max(1, line_w))
+                         fill=fill, outline=outline, width=lw)
 
     # --- coordinate labels ---
     font_sz    = max(7, spacing // 2)
     font_label = _load_font(font_sz)
     label_col  = "#444444"
 
-    # Column letters A–K above the topmost node of each N-diagonal
+    # Letters A–K: below the bottommost node of each x+y diagonal
+    # In the upright board, "bottom" = largest pixel-y = smallest engine y in that diagonal
     for d in range(5, 16):
         diag = [(x, y) for (x, y) in VALID_CELLS if x + y == d]
         if not diag:
             continue
-        top = min(diag, key=lambda p: nodes[p][1])   # smallest pixel-y = topmost
-        px, py = nodes[top]
+        # bottommost pixel = largest py = smallest engine y (since py = (x-y)*spacing/2,
+        # and for a diagonal x+y=const, smaller y means larger x means larger x-y)
+        bottom = max(diag, key=lambda p: nodes[p][1])
+        px, py = nodes[bottom]
         letter = chr(ord("A") + d - 5)
-        draw.text((px + ox, py + oy - spacing * 0.85), letter,
+        draw.text((px + ox, py + oy + spacing * 0.9), letter,
                   fill=label_col, font=font_label, anchor="mm")
 
-    # Row numbers 1–11 to the left of the leftmost node in each x-const column
-    for x in range(11):
-        col_nodes = [(x, y) for (_, y) in [(x, yy) for yy in range(11)] if (x, y) in VALID_CELLS
-                     for y in [_]]  # just rebuild cleanly below
-        col_nodes = [(x, y) for y in range(11) if (x, y) in VALID_CELLS]
-        if not col_nodes:
+    # Numbers 1–11: along the left diagonal edge.
+    # In the upright board the left edge consists of the leftmost node (smallest pixel-x)
+    # for each engine-y row. Number = y+1.
+    for y in range(11):
+        row_nodes = [(x, y) for x in range(11) if (x, y) in VALID_CELLS]
+        if not row_nodes:
             continue
-        for (_, y) in col_nodes:
-            px, py = nodes[(x, y)]
-            draw.text((px + ox - spacing * 0.85, py + oy), str(y + 1),
-                      fill=label_col, font=font_label, anchor="mm")
+        leftmost = min(row_nodes, key=lambda p: nodes[p][0])
+        px, py = nodes[leftmost]
+        draw.text((px + ox - spacing * 0.9, py + oy), str(y + 1),
+                  fill=label_col, font=font_label, anchor="mm")
 
     return img
 
@@ -702,7 +739,8 @@ Move 41 : 7:12:10 AM
         st.markdown("**Color key**")
         st.markdown("- White ring / marker = White player")
         st.markdown("- Black ring / marker = Black player")
-        st.markdown("- Red highlight = last moved piece(s)")
+        st.markdown("- Red highlight = last moved ring positions")
+        st.markdown("- Orange outline = markers flipped this move")
 
     if st.button("Render", type="primary"):
         with st.spinner("Parsing and rendering…"):
