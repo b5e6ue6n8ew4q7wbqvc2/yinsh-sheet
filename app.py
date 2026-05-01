@@ -817,10 +817,17 @@ def main() -> None:
                 # Display inline
                 st.image(sheet, caption="Game sheet", use_container_width=True)
 
-                # Download button — filename: "yinsh_White_vs_Black_2026-04-09.png"
-                date_part = (first_date or "").replace("/", "-")
-                safe = lambda s: re.sub(r"[^\w\-]", "_", s)
-                file_name = f"yinsh_{safe(white_name)}_vs_{safe(black_name)}_{date_part}.png"
+                # Download button — filename: "20260409_White_vs_Black.png"
+                def _fmt_date(d: str) -> str:
+                    """Convert M/D/YYYY to YYYYMMDD."""
+                    try:
+                        m, day, y = d.split("/")
+                        return f"{y}{int(m):02d}{int(day):02d}"
+                    except Exception:
+                        return d
+                safe = lambda s: re.sub(r"[^\w]", "_", s)
+                date_part = _fmt_date(first_date) if first_date else ""
+                file_name = f"{date_part}_{safe(white_name)}_vs_{safe(black_name)}.png"
 
                 buf = io.BytesIO()
                 sheet.save(buf, format="PNG")
