@@ -5,53 +5,54 @@ Training-focused improvements: play vs AI, rewind/review moves, save and reload 
 and visually export games as an image sheet.
 
 ## Decisions Made
-- **UI:** AI-only mode (remove Player vs Player)
+- **UI:** AI-only mode (removed Player vs Player)
 - **Save format:** Plain text using standard board notation (e.g. `E4`)
-- **Export:** Streamlit app (`app.py`) reads a BGA log or our save format and
+- **Export:** Streamlit app (`app.py`) reads a BGA log or native save file and
   produces a PNG image sheet — **done and deployed**
 - **Rewind:** Available both during AND after the game
 - **Undo:** View-only — rewind doesn't branch the game; "Resume Live" jumps back to the current live position
+- **Web build:** Emscripten/WebAssembly, hosted on itch.io
 
 ---
 
-## Part A — C++ Game Changes
+## Part A — C++ Game Changes ✅ DONE
 
-### Phase 0 — Board Labels
+### Phase 0 — Board Labels ✅
 - Draw column letters **A–K** and row numbers **1–11** around the board edges using raylib's text rendering
-- Coordinate mapping (confirmed against BGA logs and engine internals):
-  - `letter → x + y = ord(letter) - ord('A') + 5`
-  - `number → y = number - 1`
-  - Therefore: `x = (ord(letter) - ord('A') + 5) - (number - 1)`
-  - Engine index: `11 * y + x`
-- BGA uses uppercase; match that convention
+- Labels drawn in world space, scaled by `camera.zoom` so they remain a fixed pixel size
+- White colour, offset just outside the outermost valid node of each line
 
-### Phase 1 — Streamline UI
-- Remove "Player vs Player" mode and the `ChoosingMode` state entirely
-- First screen becomes the AI settings screen directly (color pick, time, memory, threads)
-- Add a "Load Game" button on the settings screen to enter review mode from a saved file
+### Phase 1 — Streamline UI ✅
+- Removed "Player vs Player" mode and the `ChoosingMode` state entirely
+- First screen is the AI settings screen directly (color pick, time, memory, threads)
+- "Load Game" button on the settings screen to enter review mode from a saved file
 
-### Phase 2 — Move History
-- Add `std::vector<Yngine::Move> move_history` to `Game`
-- Track `size_t review_cursor` (equals `move_history.size()` when at the live position)
-- Add a `BoardState replay_board` re-derived by replaying all moves from scratch up to `review_cursor` whenever the cursor changes (fast: <100 moves, pure array ops)
-- New `Game::State::Reviewing` — shows the replayed board, pauses AI input (but does not cancel any running search future)
+### Phase 2 — Move History ✅
+- `std::vector<Yngine::Move> move_history` added to `Game`
+- `size_t review_cursor` (equals `move_history.size()` when at the live position)
+- `BoardState replay_board` re-derived by replaying all moves from scratch up to `review_cursor`
+- `Game::State::Reviewing` — shows the replayed board, pauses AI input (but does not cancel any running search future)
 
-### Phase 3 — Review UI Controls
-- Draw a semi-transparent overlay bar at the bottom of the board during `Playing` and `Reviewing` states:
-  - `◀◀` jump to start, `◀` one move back, `▶` one move forward, `▶▶` jump to end/live
-  - "Resume Live" button (only visible when `review_cursor < move_history.size()`)
-  - Move counter label: e.g. `Move 14 / 22`
-- Clicking any navigation button sets `state = Reviewing` and updates `review_cursor`
-- "Resume Live" sets `review_cursor = move_history.size()` and returns to `Playing`
+### Phase 3 — Review UI Controls ✅
+- Compact rounded panel in the top-left corner, visible during `Playing` and `Reviewing`
+- Row 1: `|<` jump to start, `<` one move back, `Move N / M` counter, `>` one move forward, `>|` jump to end
+- Row 2: "Resume Live" button (disabled when already at live position)
+- Row 3: "Save" button (disabled when no moves made)
+- Row 4: "New Game" button — resets all state and returns to the settings screen
+- Navigation buttons disabled (greyed) rather than hidden when not applicable
 
-### Phase 4 — Save Game
-- Auto-save to `YYYYMMDD_HHMMSS.txt` when game reaches GameOver
-- "Save" button in the review bar to save manually at any time
-- File format (see **Save Format Spec** below)
+### Phase 4 — Save Game ✅
+- Auto-save to `YYYYMMDD_HHMMSS.txt` when game reaches GameOver (once per game)
+- "Save" button in the review panel to save manually at any time
+- File format: see **Save Format Spec** below
 
-### Phase 5 — Load Game
+### Phase 5 — Load Game ✅
 - Parse the plain-text format, reconstruct `move_history`, enter `Reviewing` state at move 0
 - Validate each move against a replayed `BoardState` during loading; report parse errors to stderr
+- Settings screen: "Load Game" button expands to a text box + Load/Cancel buttons; shows error on failure
+
+### New Game Button ✅
+- "New Game" in the review panel resets board, history, engine, and returns to the settings screen
 
 ---
 
@@ -60,7 +61,9 @@ and visually export games as an image sheet.
 Streamlit app at `app.py`, repo: `github.com/b5e6ue6n8ew4q7wbqvc2/yinsh-sheet`
 
 ### What it does
+- Auto-detects input format (BGA play log or native save file)
 - Parses BGA play logs (auto-handles `takes back their last move`, multi-step undos)
+- Parses native save files (PLACE/MOVE/REMOVE_ROW/REMOVE_RING, derives colour from turn sequence)
 - Replays the full game in pure Python
 - Renders each board position as an upright hex grid (nodes-and-lines, matches the physical board)
 - Highlights: red = last-moved ring positions, orange = markers flipped this move
@@ -68,22 +71,54 @@ Streamlit app at `app.py`, repo: `github.com/b5e6ue6n8ew4q7wbqvc2/yinsh-sheet`
 - Title bar: `White (2) vs Black (3)   |   4/9/2026 – 4/10/2026   |   Black wins`
 - Download filename: `20260409_White_vs_Black.png`
 
-### Still to add (future)
-- Support for our native save format (Part A Phase 4) as a second input — see Save Format Spec below
+---
+
+## Web Build
+
+The game is built for the web using Emscripten and hosted on itch.io as an HTML5 game.
+
+### Building
+```bash
+# Configure (once)
+nix-shell -p emscripten cmake ninja python3 --run "
+  EM_CACHE=/home/bob/.emscripten_cache \
+  emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release -DPLATFORM=Web -GNinja
+"
+
+# Build
+nix-shell -p emscripten cmake ninja python3 --run "
+  EM_CACHE=/home/bob/.emscripten_cache cmake --build build-web
+"
+```
+
+### Packaging for itch.io
+```bash
+cd build-web/yinsh-gui
+cp Yinsh-gui.html index.html
+zip ~/yinsh-web.zip index.html Yinsh-gui.js Yinsh-gui.wasm
+```
+
+Upload `yinsh-web.zip` to itch.io as an HTML5 game with **SharedArrayBuffer support** enabled
+(required for pthreads / AI search).
+
+### Native build (for local testing)
+```bash
+nix-shell -p cmake ninja gcc xorg.libX11 xorg.libXrandr xorg.libXinerama \
+          xorg.libXcursor xorg.libXi xorg.libXext libGL --run "
+  cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -GNinja && cmake --build build
+"
+# Binary: build/yinsh-gui/Yinsh-gui
+```
 
 ---
 
 ## Save Format Spec
 
-Plain text, one record per line, designed to be parseable by both the C++ loader and
-the Python Streamlit app.  **Must be supported by `app.py` as a second input format.**
+Plain text, one record per line, readable by both the C++ loader and the Python app.
 
 ```
-# DATE 20260409_143022          (YYYYMMDD_HHMMSS of game start)
+# DATE 20260409_143022          (YYYYMMDD_HHMMSS of game end)
 # PLAYER_COLOR White             (color the human played: White or Black)
-# WHITE_PLAYER HardDiggler       (display name — omit if unknown)
-# BLACK_PLAYER yngine_ai         (display name — omit if unknown)
-# MOVE_TIME 5                    (AI move time in seconds)
 # RESULT White|Black|Draw|Unfinished
 PLACE E4
 MOVE E4 E9
@@ -92,21 +127,12 @@ REMOVE_RING D6
 ```
 
 Rules:
-- Lines beginning with `#` are metadata, all optional except `DATE` and `RESULT`
+- Lines beginning with `#` are metadata, all optional
 - Move lines use uppercase `Letter+Number` coords, matching BGA notation exactly
 - `MOVE` always flips markers between `from` and `to` — direction is inferred from the two coords
 - `REMOVE_ROW` always covers exactly 5 cells; `from` and `to` are the two endpoints
 - No `PASS` line needed (Yinsh has no pass)
 - Blank lines and unknown `#` keys are ignored
-
-### Parser additions needed in `app.py`
-When the input does **not** contain `Move N :` BGA headers, treat it as native format:
-- Read `#` metadata into `player_map` and `metadata`
-- `PLACE coord` → `PlaceRing`
-- `MOVE from to` → `MoveRing` (marker placement is implicit, same as BGA handling)
-- `REMOVE_ROW from to` → `RemoveRow`
-- `REMOVE_RING coord` → `RemoveRing`
-- No takeback handling needed (save file only stores confirmed moves)
 
 ---
 
@@ -156,6 +182,5 @@ pixel_y = (x - y) * spacing / sqrt(3)     # vertical, 1=bottom 11=top (PIL y-axi
   The `replay_board` is GUI-only (no engine sync needed).
 - **Save format uses standard coords:** Indices are converted to/from `Letter+Number` on
   save/load so files are human-readable and cross-compatible with BGA logs and the Python tool.
-- **Log output for the Streamlit app:** When writing the save file, the C++ code can optionally
-  also write a BGA-compatible log (or just use the native format above — the app will support both).
-  The native format is simpler to write from C++ and avoids duplicating player-name/timestamp logic.
+- **Web canvas sizing:** On Emscripten builds, `window.innerWidth/Height` is read via `EM_ASM_INT`
+  at startup and each frame to keep the raylib canvas in sync with the itch.io iframe.
