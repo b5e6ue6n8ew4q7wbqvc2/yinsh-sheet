@@ -359,97 +359,98 @@ void Game::render() {
 }
 
 void Game::draw_review_bar() {
-    const std::size_t total  = this->move_history.size();
-    const bool at_live       = (this->review_cursor == total);
+    const std::size_t total = this->move_history.size();
+    const bool at_live      = (this->review_cursor == total);
+    const bool at_start     = (this->review_cursor == 0);
 
     const float margin  = 8.f;
-    const float padding = 4.f;
+    const float padding = 6.f;
     const float btn_w   = 36.f;
     const float btn_h   = 24.f;
+    const float rl_w    = 100.f;
+    const float label_w = 110.f;
     const int   font_sz = 16;
 
-    // Move counter label — fixed width slot wide enough for "Move 999 / 999"
-    const char* counter = (total == 0)
-        ? "Move 0 / 0"
-        : TextFormat("Move %zu / %zu", this->review_cursor, total);
-    const float label_w = 120.f;
+    // Two rows: nav row + resume row
+    // Row 1: |< < [Move N/M] > >|
+    // Row 2 (centred): [Resume Live]
+    const float row_gap  = 4.f;
+    const float panel_w  = margin + btn_w + padding + btn_w + padding
+                         + label_w + padding + btn_w + padding + btn_w
+                         + margin;
+    const float panel_h  = margin + btn_h + row_gap + btn_h + margin;
+    const float panel_x  = margin;
+    const float panel_y  = margin;
 
-    // Total panel width: |< < [label] > >| [Resume Live]
-    const float rl_w        = 90.f;  // always reserved so panel never resizes
-    const float panel_w     = btn_w + padding + btn_w + padding
-                            + label_w + padding
-                            + btn_w + padding + btn_w
-                            + padding + rl_w
-                            + margin * 2.f;
-    const float panel_h     = btn_h + margin * 2.f;
-    const float panel_x     = margin;
-    const float panel_y     = margin;
-
-    // Background
     DrawRectangleRounded(
         Rectangle{panel_x, panel_y, panel_w, panel_h},
-        0.3f, 8, ColorAlpha(BLACK, 0.60f));
+        0.25f, 8, ColorAlpha(BLACK, 0.60f));
 
-    // Start laying out from left edge of panel interior
-    float bx = panel_x + margin;
-    const float by = panel_y + (panel_h - btn_h) / 2.f;
+    // --- Row 1: nav buttons + centred label ---
+    float bx      = panel_x + margin;
+    const float by = panel_y + margin;
 
-    // |< button
-    if (GuiButton(Rectangle{bx, by, btn_w, btn_h}, "|<")) {
-        if (this->review_cursor > 0) {
-            this->review_cursor = 0;
-            this->rebuild_replay_board();
-            this->state = State::Reviewing;
-        }
+    // |< 
+    if (at_start) GuiSetState(STATE_DISABLED);
+    if (GuiButton(Rectangle{bx, by, btn_w, btn_h}, "|<") && !at_start) {
+        this->review_cursor = 0;
+        this->rebuild_replay_board();
+        this->state = State::Reviewing;
     }
+    GuiSetState(STATE_NORMAL);
     bx += btn_w + padding;
 
-    // < button
-    if (GuiButton(Rectangle{bx, by, btn_w, btn_h}, "<")) {
-        if (this->review_cursor > 0) {
-            this->review_cursor--;
-            this->rebuild_replay_board();
-            this->state = State::Reviewing;
-        }
+    // <
+    if (at_start) GuiSetState(STATE_DISABLED);
+    if (GuiButton(Rectangle{bx, by, btn_w, btn_h}, "<") && !at_start) {
+        this->review_cursor--;
+        this->rebuild_replay_board();
+        this->state = State::Reviewing;
     }
+    GuiSetState(STATE_NORMAL);
     bx += btn_w + padding;
 
-    // Move counter label, centred vertically
+    // Label — centred within label_w slot
+    const char* counter = TextFormat("Move %zu / %zu", this->review_cursor, total);
+    const int text_px   = MeasureText(counter, font_sz);
     DrawText(counter,
-             static_cast<int>(bx),
+             static_cast<int>(bx + (label_w - text_px) / 2.f),
              static_cast<int>(by + (btn_h - font_sz) / 2.f),
              font_sz, WHITE);
     bx += label_w + padding;
 
-    // > button
-    if (GuiButton(Rectangle{bx, by, btn_w, btn_h}, ">")) {
-        if (!at_live) {
-            this->review_cursor++;
-            this->rebuild_replay_board();
-            if (this->review_cursor == total)
-                this->state = State::Playing;
-        }
+    // >
+    if (at_live) GuiSetState(STATE_DISABLED);
+    if (GuiButton(Rectangle{bx, by, btn_w, btn_h}, ">") && !at_live) {
+        this->review_cursor++;
+        this->rebuild_replay_board();
+        if (this->review_cursor == total)
+            this->state = State::Playing;
+        else
+            this->state = State::Reviewing;
     }
+    GuiSetState(STATE_NORMAL);
     bx += btn_w + padding;
 
-    // >| button
-    if (GuiButton(Rectangle{bx, by, btn_w, btn_h}, ">|")) {
-        if (!at_live) {
-            this->review_cursor = total;
-            this->rebuild_replay_board();
-            this->state = State::Playing;
-        }
+    // >|
+    if (at_live) GuiSetState(STATE_DISABLED);
+    if (GuiButton(Rectangle{bx, by, btn_w, btn_h}, ">|") && !at_live) {
+        this->review_cursor = total;
+        this->rebuild_replay_board();
+        this->state = State::Playing;
     }
-    bx += btn_w + padding;
+    GuiSetState(STATE_NORMAL);
 
-    // Resume Live button — only when rewound, but slot is always reserved
-    if (!at_live) {
-        if (GuiButton(Rectangle{bx, by, rl_w, btn_h}, "Resume Live")) {
-            this->review_cursor = total;
-            this->rebuild_replay_board();
-            this->state = State::Playing;
-        }
+    // --- Row 2: Resume Live, centred in panel ---
+    const float rl_x = panel_x + (panel_w - rl_w) / 2.f;
+    const float rl_y = by + btn_h + row_gap;
+    if (at_live) GuiSetState(STATE_DISABLED);
+    if (GuiButton(Rectangle{rl_x, rl_y, rl_w, btn_h}, "Resume Live") && !at_live) {
+        this->review_cursor = total;
+        this->rebuild_replay_board();
+        this->state = State::Playing;
     }
+    GuiSetState(STATE_NORMAL);
 }
 
 void Game::draw_board(const BoardState& board) {
