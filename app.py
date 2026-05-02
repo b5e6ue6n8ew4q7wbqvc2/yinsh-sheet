@@ -374,6 +374,143 @@ def parse_bga_log(text: str) -> ParsedGame:
 
 
 # ---------------------------------------------------------------------------
+# Native save-format parser  (C++ game output)
+# ---------------------------------------------------------------------------
+#
+# Format (one record per line):
+#   # DATE 20260409_143022
+#   # PLAYER_COLOR White
+#   # RESULT White|Black|Draw|Unfinished
+#   PLACE E4
+#   MOVE E4 E9
+#   REMOVE_ROW E5 E9
+#   REMOVE_RING D6
+#
+# Colour is NOT stored per-move; we track it ourselves by replaying the
+# game-state turn sequence (white places first, then alternates).
+
+def parse_native_log(text: str) -> ParsedGame:
+    """Parse a native C++ save file into a ParsedGame."""
+    lines = text.strip().splitlines()
+    metadata: dict[str, str] = {}
+    player_map: dict[str, str] = {}
+
+    # Collect metadata from # comments
+    for line in lines:
+        line = line.strip()
+        if not line.startswith("#"):
+            continue
+        parts = line[1:].strip().split(None, 1)
+        if len(parts) == 2:
+            metadata[parts[0].upper()] = parts[1].strip()
+
+    # Build player_map from PLAYER_COLOR + fixed names "White" / "Black"
+    player_map["White"] = Color.WHITE
+    player_map["Black"] = Color.BLACK
+
+    # We need to track whose turn it is to assign colour to each move.
+    # Mirror the engine's NextAction state machine in miniature.
+    # States: placing_rings | moving | removing_row | removing_ring
+    TOTAL_RINGS = 10  # 5 per player
+    rings_placed = 0
+    next_action  = "place"   # place | move | remove_row | remove_ring
+    turn         = Color.WHITE   # white places first
+
+    # After a RemoveRow the same colour removes a ring, then turn flips.
+    # After a RemoveRing, turn flips to the other player.
+    # Multiple consecutive RemoveRow+RemoveRing sequences can happen in one
+    # "move" if both players have rows (handled by the engine; in practice
+    # it serialises them as separate lines so we just follow the sequence).
+    pending_remove_color: str | None = None
+
+    moves: list[Move] = []
+
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        tokens = line.split()
+        verb   = tokens[0].upper()
+
+        if verb == "PLACE":
+            if len(tokens) != 2:
+                raise ValueError(f"Bad PLACE line: {line!r}")
+            coord = bga_to_xy(tokens[1].upper())
+            moves.append(PlaceRing(coord=coord, color=turn))
+            rings_placed += 1
+            turn = Color.opposite(turn)
+            if rings_placed >= TOTAL_RINGS:
+                next_action = "move"
+
+        elif verb == "MOVE":
+            if len(tokens) != 3:
+                raise ValueError(f"Bad MOVE line: {line!r}")
+            frm = bga_to_xy(tokens[1].upper())
+            to  = bga_to_xy(tokens[2].upper())
+            moves.append(MoveRing(frm=frm, to=to, color=turn))
+            # After a ring move, next could be remove_row or the opponent moves
+            # We'll handle the turn flip after remove_row/ring or immediately
+            pending_remove_color = turn   # in case rows need removing
+            next_action = "remove_row_or_move"
+            turn = Color.opposite(turn)   # tentatively flip; remove_row overrides
+
+        elif verb == "REMOVE_ROW":
+            if len(tokens) != 3:
+                raise ValueError(f"Bad REMOVE_ROW line: {line!r}")
+            frm = bga_to_xy(tokens[1].upper())
+            to  = bga_to_xy(tokens[2].upper())
+            # The player who just moved (pending_remove_color) removes the row
+            color = pending_remove_color if pending_remove_color is not None else Color.opposite(turn)
+            moves.append(RemoveRow(frm=frm, to=to, color=color))
+            # Turn stays on remove_ring for same player
+
+        elif verb == "REMOVE_RING":
+            if len(tokens) != 2:
+                raise ValueError(f"Bad REMOVE_RING line: {line!r}")
+            coord = bga_to_xy(tokens[1].upper())
+            color = pending_remove_color if pending_remove_color is not None else Color.opposite(turn)
+            moves.append(RemoveRing(coord=coord, color=color))
+            # After removing a ring, pending_remove_color resets; next line
+            # may be another REMOVE_ROW (other player also had a row) or a MOVE
+            pending_remove_color = None
+
+        else:
+            raise ValueError(f"Unknown verb: {verb!r}")
+
+    return ParsedGame(moves=moves, player_map=player_map, metadata=metadata)
+
+
+def is_native_format(text: str) -> bool:
+    """Return True if the text looks like a native C++ save file."""
+    for line in text.strip().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        tokens = line.split()
+        verb = tokens[0].upper()
+        # BGA logs start with "Move N :" headers or "PlayerName verb …"
+        # Native verbs are PLACE, MOVE (exactly 3 tokens), REMOVE_ROW, REMOVE_RING
+        if verb == "PLACE" and len(tokens) == 2:
+            return True
+        if verb == "MOVE" and len(tokens) == 3:
+            return True
+        if verb == "REMOVE_ROW" and len(tokens) == 3:
+            return True
+        if verb == "REMOVE_RING" and len(tokens) == 2:
+            return True
+        return False
+    return False
+
+
+def parse_log(text: str) -> ParsedGame:
+    """Auto-detect format and parse."""
+    if is_native_format(text):
+        return parse_native_log(text)
+    return parse_bga_log(text)
+
+
+# ---------------------------------------------------------------------------
 # Game replay
 # ---------------------------------------------------------------------------
 
@@ -766,11 +903,11 @@ def main() -> None:
     st.set_page_config(page_title="Yinsh Game Sheet", layout="wide")
     st.title("Yinsh Game Sheet Renderer")
     st.markdown(
-        "Paste a **Board Game Arena** Yinsh play log below, then click **Render**."
+        "Paste a **Board Game Arena** play log *or* a **native save file** below, then click **Render**."
     )
 
-    log_text = st.text_area("BGA play log", value="", height=300,
-                            placeholder="Paste your BGA Yinsh play log here…")
+    log_text = st.text_area("Game log", value="", height=300,
+                            placeholder="Paste a BGA play log or native save file here…")
 
     with st.sidebar:
         st.header("Options")
@@ -789,7 +926,7 @@ def main() -> None:
     if st.button("Render", type="primary"):
         with st.spinner("Parsing and rendering…"):
             try:
-                parsed = parse_bga_log(log_text)
+                parsed = parse_log(log_text)
 
                 if not parsed.moves:
                     st.error("No moves were parsed. Check the log format.")
@@ -804,19 +941,35 @@ def main() -> None:
                 black_name = next((n for n, c in parsed.player_map.items() if c == Color.BLACK), "Black")
 
                 # Info bar
-                if parsed.player_map:
-                    names = ", ".join(f"{n} = {c}" for n, c in parsed.player_map.items())
-                    st.info(f"Players: {names}  |  {len(parsed.moves)} moves parsed")
+                fmt_label = "native" if is_native_format(log_text) else "BGA"
+                st.info(f"Format: {fmt_label}  |  {len(parsed.moves)} moves parsed")
 
-                # Title: "White (2) vs Black (3)  |  date – date  |  White wins"
-                first_date = parsed.metadata.get("first_date", "")
-                last_date  = parsed.metadata.get("last_date", "")
-                date_str   = first_date if first_date == last_date else f"{first_date} – {last_date}"
+                # Title: "White (2) vs Black (3)  |  date  |  result"
+                # Native format: DATE is YYYYMMDD_HHMMSS; BGA: M/D/YYYY
+                native = is_native_format(log_text)
+                if native:
+                    raw_date = parsed.metadata.get("DATE", "")
+                    date_str = raw_date[:8] if raw_date else ""   # just YYYYMMDD
+                else:
+                    first_date = parsed.metadata.get("first_date", "")
+                    last_date  = parsed.metadata.get("last_date", "")
+                    date_str   = first_date if first_date == last_date else f"{first_date} – {last_date}"
 
                 title = f"{white_name} ({result.white_rings})  vs  {black_name} ({result.black_rings})"
                 if date_str:
                     title += f"   |   {date_str}"
-                if result.winner == Color.WHITE:
+
+                # Use RESULT metadata from native format if available; otherwise derive from replay
+                native_result = parsed.metadata.get("RESULT", "") if native else ""
+                if native_result == "White":
+                    title += f"   |   {white_name} wins"
+                elif native_result == "Black":
+                    title += f"   |   {black_name} wins"
+                elif native_result == "Draw":
+                    title += "   |   Draw"
+                elif native_result == "Unfinished":
+                    title += "   |   Unfinished"
+                elif result.winner == Color.WHITE:
                     title += f"   |   {white_name} wins"
                 elif result.winner == Color.BLACK:
                     title += f"   |   {black_name} wins"
@@ -829,7 +982,7 @@ def main() -> None:
                 st.image(sheet, caption="Game sheet", width='stretch')
 
                 # Download button — filename: "20260409_White_vs_Black.png"
-                def _fmt_date(d: str) -> str:
+                def _fmt_bga_date(d: str) -> str:
                     """Convert M/D/YYYY to YYYYMMDD."""
                     try:
                         m, day, y = d.split("/")
@@ -837,7 +990,10 @@ def main() -> None:
                     except Exception:
                         return d
                 safe = lambda s: re.sub(r"[^\w]", "_", s)
-                date_part = _fmt_date(first_date) if first_date else ""
+                if native:
+                    date_part = date_str   # already YYYYMMDD or empty
+                else:
+                    date_part = _fmt_bga_date(parsed.metadata.get("first_date", ""))
                 file_name = f"{date_part}_{safe(white_name)}_vs_{safe(black_name)}.png"
 
                 buf = io.BytesIO()
