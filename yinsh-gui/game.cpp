@@ -17,6 +17,8 @@
 #include <chrono>
 #include <ctime>
 #include <fstream>
+#include <iostream>
+#include <sstream>
 #include <string>
 
 Game::Game()
@@ -226,6 +228,139 @@ void Game::save_game(const std::string& path) {
     }
 }
 
+// Parse "Letter+Number" notation (e.g. "E4") into a board index.
+// Returns false if the string is malformed or out of range.
+static bool notation_to_index(const std::string& s, uint8_t& out_index) {
+    if (s.size() < 2) return false;
+    const char letter = s[0];
+    if (letter < 'A' || letter > 'K') return false;
+    int number = 0;
+    for (std::size_t i = 1; i < s.size(); i++) {
+        if (s[i] < '0' || s[i] > '9') return false;
+        number = number * 10 + (s[i] - '0');
+    }
+    if (number < 1 || number > 11) return false;
+    const int letter_index = letter - 'A';
+    const int y = number - 1;
+    const int x = (letter_index + 5) - y;
+    if (x < 0 || x > 10 || y < 0 || y > 10) return false;
+    if (!Yngine::Bitboard::are_coords_in_game(x, y)) return false;
+    out_index = Yngine::Bitboard::coords_to_index(x, y);
+    return true;
+}
+
+// Derive direction from two board indices (must be on a straight line).
+static bool indices_to_direction(uint8_t from_idx, uint8_t to_idx, Yngine::Direction& out_dir) {
+    const auto fc = Yngine::Bitboard::index_to_coords(from_idx);
+    const auto tc = Yngine::Bitboard::index_to_coords(to_idx);
+    const int dx = static_cast<int>(tc.first)  - static_cast<int>(fc.first);
+    const int dy = static_cast<int>(tc.second) - static_cast<int>(fc.second);
+    if (dx == 0 && dy == 0) return false;
+    // Normalise to unit step
+    const int len = std::max(std::abs(dx), std::abs(dy));
+    if (dx % len != 0 || dy % len != 0) return false;
+    const int ux = dx / len, uy = dy / len;
+    for (int d = 0; d < 6; d++) {
+        const auto& v = Yngine::direction_to_vec2[d];
+        if (v.first == ux && v.second == uy) {
+            out_dir = static_cast<Yngine::Direction>(d);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Game::load_game(const std::string& path) {
+    std::ifstream f(path);
+    if (!f) {
+        std::cerr << "load_game: cannot open '" << path << "'\n";
+        return false;
+    }
+
+    std::vector<Yngine::Move> loaded;
+    BoardState validator;
+    std::string line;
+    int line_num = 0;
+
+    while (std::getline(f, line)) {
+        line_num++;
+        // Strip trailing whitespace
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+            line.pop_back();
+        // Skip blank lines and comments
+        if (line.empty() || line[0] == '#') continue;
+
+        // Tokenise
+        std::vector<std::string> tokens;
+        std::istringstream ss(line);
+        std::string tok;
+        while (ss >> tok) tokens.push_back(tok);
+        if (tokens.empty()) continue;
+
+        Yngine::Move move{Yngine::PassMove{}};
+        bool parsed = false;
+
+        if (tokens[0] == "PLACE" && tokens.size() == 2) {
+            uint8_t idx;
+            if (!notation_to_index(tokens[1], idx)) goto parse_error;
+            move = Yngine::PlaceRingMove{idx};
+            parsed = true;
+        } else if (tokens[0] == "MOVE" && tokens.size() == 3) {
+            uint8_t from_idx, to_idx;
+            if (!notation_to_index(tokens[1], from_idx)) goto parse_error;
+            if (!notation_to_index(tokens[2], to_idx))   goto parse_error;
+            Yngine::Direction dir;
+            if (!indices_to_direction(from_idx, to_idx, dir)) goto parse_error;
+            move = Yngine::RingMove{from_idx, to_idx, dir};
+            parsed = true;
+        } else if (tokens[0] == "REMOVE_ROW" && tokens.size() == 3) {
+            uint8_t from_idx, to_idx;
+            if (!notation_to_index(tokens[1], from_idx)) goto parse_error;
+            if (!notation_to_index(tokens[2], to_idx))   goto parse_error;
+            Yngine::Direction dir;
+            if (!indices_to_direction(from_idx, to_idx, dir)) goto parse_error;
+            move = Yngine::RemoveRowMove{from_idx, dir};
+            parsed = true;
+        } else if (tokens[0] == "REMOVE_RING" && tokens.size() == 2) {
+            uint8_t idx;
+            if (!notation_to_index(tokens[1], idx)) goto parse_error;
+            move = Yngine::RemoveRingMove{idx};
+            parsed = true;
+        } else {
+            std::cerr << "load_game: unknown token '" << tokens[0] << "' at line " << line_num << "\n";
+            return false;
+        }
+
+        if (parsed) {
+            if (!validator.is_move_legal(move)) {
+                std::cerr << "load_game: illegal move at line " << line_num << ": " << line << "\n";
+                return false;
+            }
+            validator.apply_move(move);
+            loaded.push_back(move);
+        }
+        continue;
+
+parse_error:
+        std::cerr << "load_game: parse error at line " << line_num << ": " << line << "\n";
+        return false;
+    }
+
+    // Success — replace game state
+    this->move_history  = std::move(loaded);
+    this->review_cursor = 0;
+    this->auto_saved    = true; // don't auto-save a loaded game
+    this->board_state   = BoardState{};
+    this->engine        = std::nullopt;
+    this->engine_move   = std::nullopt;
+    this->selected_ring = std::nullopt;
+    this->ring_moves.clear();
+    this->row_remove_from = std::nullopt;
+    this->rebuild_replay_board();
+    this->state = State::Reviewing;
+    return true;
+}
+
 std::optional<Yngine::Move> Game::get_player_move() {
     switch (this->board_state.get_next_action()) {
     case BoardState::NextAction::RingPlacement: {
@@ -426,11 +561,45 @@ void Game::render() {
             this->state = Game::State::Playing;
         }
 
-        if (GuiButton(
-            Rectangle{window_size.x / 2 - 100, window_size.y / 2 + 140, 200, 30},
-            "Load Game"
-        )) {
-            // TODO Phase 5: open file and enter review mode
+        static bool  show_load_input = false;
+        static char  load_path[512]  = "";
+        static bool  load_error      = false;
+
+        if (!show_load_input) {
+            if (GuiButton(
+                Rectangle{window_size.x / 2 - 100, window_size.y / 2 + 140, 200, 30},
+                "Load Game"
+            )) {
+                show_load_input = true;
+                load_error = false;
+                load_path[0] = '\0';
+            }
+        } else {
+            // Path text box
+            const float box_y = window_size.y / 2 + 140;
+            GuiTextBox(
+                Rectangle{window_size.x / 2 - 150, box_y, 260, 30},
+                load_path, sizeof(load_path), true
+            );
+            // Load confirm button
+            if (GuiButton(Rectangle{window_size.x / 2 + 120, box_y, 60, 30}, "Load")) {
+                if (this->load_game(std::string(load_path))) {
+                    show_load_input = false;
+                    load_error = false;
+                } else {
+                    load_error = true;
+                }
+            }
+            // Cancel
+            if (GuiButton(Rectangle{window_size.x / 2 + 190, box_y, 60, 30}, "Cancel")) {
+                show_load_input = false;
+                load_error = false;
+            }
+            // Error message
+            if (load_error) {
+                DrawText("Failed to load file.", static_cast<int>(window_size.x / 2 - 100),
+                         static_cast<int>(box_y + 36), 16, RED);
+            }
         }
     } break;
     case State::Playing: {

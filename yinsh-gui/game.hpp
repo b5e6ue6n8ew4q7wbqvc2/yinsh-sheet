@@ -45,6 +45,10 @@ private:
     // Save move_history to a file in the native save format
     void save_game(const std::string& path);
 
+    // Load a native save file into move_history and enter Reviewing at move 0
+    // Returns false and prints to stderr on parse/validation error
+    bool load_game(const std::string& path);
+
     HVec2 get_mouse_hex_pos();
 
     raylib::Window window;
