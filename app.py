@@ -129,7 +129,7 @@ class BoardState:
         markers_own = self.white_markers if color == Color.WHITE else self.black_markers
         markers_opp = self.black_markers if color == Color.WHITE else self.white_markers
 
-        assert frm in rings, f"{color} ring not at {frm}"
+        assert frm in rings, f"{color} ring not at {xy_to_bga(*frm)} (engine {frm})"
         rings.discard(frm)
         rings.add(to)
 
@@ -235,6 +235,7 @@ _PLACE_RING   = re.compile(r"places a ring on ([A-K]\d{1,2})", re.IGNORECASE)
 _PLACE_MARKER = re.compile(r"places a marker on ([A-K]\d{1,2})", re.IGNORECASE)
 _MOVE_RING    = re.compile(r"moves a ring from ([A-K]\d{1,2}) to ([A-K]\d{1,2})", re.IGNORECASE)
 _TAKES_BACK   = re.compile(r"takes back their last move", re.IGNORECASE)
+_RESTARTS     = re.compile(r"restarts their turn", re.IGNORECASE)
 _REMOVE_ROW   = re.compile(r"removes? (?:a )?row (?:of markers )?from ([A-K]\d{1,2}) to ([A-K]\d{1,2})", re.IGNORECASE)
 _REMOVE_RING  = re.compile(r"removes? (?:a )?ring (?:from|on|at) ([A-K]\d{1,2})", re.IGNORECASE)
 
@@ -308,6 +309,16 @@ def parse_bga_log(text: str) -> ParsedGame:
         if _TAKES_BACK.search(rest):
             if moves:
                 moves.pop()
+            continue
+
+        if _RESTARTS.search(rest):
+            # Undo the entire current turn: pop back through and including the
+            # _PlaceMarker that started this turn (MoveRing, optional RemoveRow/
+            # RemoveRing actions, then the _PlaceMarker itself).
+            while moves and not isinstance(moves[-1], _PlaceMarker):
+                moves.pop()
+            if moves:
+                moves.pop()  # pop the _PlaceMarker itself
             continue
 
         m = _PLACE_RING.search(rest)
@@ -815,7 +826,7 @@ def main() -> None:
                 sheet = build_sheet(frames, spacing=cell_size, cols=cols, title=title)
 
                 # Display inline
-                st.image(sheet, caption="Game sheet", use_container_width=True)
+                st.image(sheet, caption="Game sheet", width='stretch')
 
                 # Download button — filename: "20260409_White_vs_Black.png"
                 def _fmt_date(d: str) -> str:
