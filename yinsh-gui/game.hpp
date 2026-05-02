@@ -22,7 +22,6 @@ public:
 
 private:
     enum class State {
-        ChoosingMode,
         ChoosingAISettings,
         Playing,
     };

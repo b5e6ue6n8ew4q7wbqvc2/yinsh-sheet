@@ -18,7 +18,7 @@
 Game::Game()
     : window{}
     , camera{}
-    , state{Game::State::ChoosingMode}
+    , state{Game::State::ChoosingAISettings}
     , white_is_ai{false}
     , black_is_ai{false}
     , board_state{}
@@ -76,7 +76,6 @@ void Game::run() {
 
 void Game::update() {
     switch (this->state) {
-    case State::ChoosingMode:
     case State::ChoosingAISettings: {
     } break;
     case State::Playing: {
@@ -250,23 +249,6 @@ void Game::render() {
     const auto window_size = window.GetSize();
 
     switch (this->state) {
-    case State::ChoosingMode: {
-        if (GuiButton(
-            Rectangle{window_size.x / 2 - 100, window_size.y / 2 - 50, 200, 40},
-            "Player vs Player"
-        )) {
-            this->white_is_ai = false;
-            this->black_is_ai = false;
-            this->state = Game::State::Playing;
-        }
-
-        if (GuiButton(
-            Rectangle{window_size.x / 2 - 100, window_size.y / 2 + 10, 200, 40},
-            "Player vs AI"
-        )) {
-            this->state = Game::State::ChoosingAISettings;
-        }
-    } break;
     case State::ChoosingAISettings: {
         static int color_selected = 0;
         GuiToggleGroup(
@@ -334,6 +316,13 @@ void Game::render() {
             this->engine.emplace(memory_limit_mb * 1024 * 1024);
 
             this->state = Game::State::Playing;
+        }
+
+        if (GuiButton(
+            Rectangle{window_size.x / 2 - 100, window_size.y / 2 + 140, 200, 30},
+            "Load Game"
+        )) {
+            // TODO Phase 5: open file and enter review mode
         }
     } break;
     case State::Playing: {
