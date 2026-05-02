@@ -361,6 +361,22 @@ parse_error:
     return true;
 }
 
+void Game::reset_game() {
+    this->board_state     = BoardState{};
+    this->replay_board    = BoardState{};
+    this->move_history.clear();
+    this->review_cursor   = 0;
+    this->auto_saved      = false;
+    this->selected_ring   = std::nullopt;
+    this->ring_moves.clear();
+    this->row_remove_from = std::nullopt;
+    this->engine          = std::nullopt;
+    this->engine_move     = std::nullopt;
+    this->white_is_ai     = false;
+    this->black_is_ai     = false;
+    this->state           = State::ChoosingAISettings;
+}
+
 std::optional<Yngine::Move> Game::get_player_move() {
     switch (this->board_state.get_next_action()) {
     case BoardState::NextAction::RingPlacement: {
@@ -632,16 +648,18 @@ void Game::draw_review_bar() {
     const float label_w = 110.f;
     const int   font_sz = 16;
 
-    // Three rows:
+    // Four rows:
     // Row 1: |< < [Move N/M] > >|
     // Row 2 (centred): [Resume Live]
     // Row 3 (centred): [Save]
+    // Row 4 (centred): [New Game]
     const float row_gap  = 4.f;
     const float save_w   = 60.f;
+    const float ng_w     = 90.f;
     const float panel_w  = margin + btn_w + padding + btn_w + padding
                          + label_w + padding + btn_w + padding + btn_w
                          + margin;
-    const float panel_h  = margin + btn_h + row_gap + btn_h + row_gap + btn_h + margin;
+    const float panel_h  = margin + btn_h + row_gap + btn_h + row_gap + btn_h + row_gap + btn_h + margin;
     const float panel_x  = margin;
     const float panel_y  = margin;
 
@@ -727,6 +745,13 @@ void Game::draw_review_bar() {
         this->save_game(std::string(buf) + ".txt");
     }
     GuiSetState(STATE_NORMAL);
+
+    // --- Row 4: New Game, centred in panel ---
+    const float ng_x = panel_x + (panel_w - ng_w) / 2.f;
+    const float ng_y = save_y + btn_h + row_gap;
+    if (GuiButton(Rectangle{ng_x, ng_y, ng_w, btn_h}, "New Game")) {
+        this->reset_game();
+    }
 }
 
 void Game::draw_board(const BoardState& board) {

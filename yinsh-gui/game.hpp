@@ -49,6 +49,9 @@ private:
     // Returns false and prints to stderr on parse/validation error
     bool load_game(const std::string& path);
 
+    // Reset all game state and return to the settings screen
+    void reset_game();
+
     HVec2 get_mouse_hex_pos();
 
     raylib::Window window;
