@@ -7,6 +7,7 @@
 
 #include <raylib-cpp.hpp>
 #include <optional>
+#include <string>
 #include <vector>
 
 class Game {
@@ -41,6 +42,9 @@ private:
     // Rebuild replay_board by replaying move_history[0..review_cursor)
     void rebuild_replay_board();
 
+    // Save move_history to a file in the native save format
+    void save_game(const std::string& path);
+
     HVec2 get_mouse_hex_pos();
 
     raylib::Window window;
@@ -65,6 +69,7 @@ private:
     std::vector<Yngine::Move> move_history;
     std::size_t review_cursor = 0; // == move_history.size() when at live position
     BoardState replay_board;       // re-derived board for review mode
+    bool auto_saved = false;       // true once we've auto-saved this game
 
     // Not null if we play against AI
     std::optional<Yngine::MCTS> engine;

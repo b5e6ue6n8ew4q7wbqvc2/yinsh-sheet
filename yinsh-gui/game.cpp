@@ -14,6 +14,10 @@
 
 #include <cassert>
 #include <algorithm>
+#include <chrono>
+#include <ctime>
+#include <fstream>
+#include <string>
 
 Game::Game()
     : window{}
@@ -82,8 +86,18 @@ void Game::update() {
         // AI search continues in background; we just don't apply input or moves.
     } break;
     case State::Playing: {
-        if (this->board_state.get_next_action() == BoardState::NextAction::GameOver)
+        if (this->board_state.get_next_action() == BoardState::NextAction::GameOver) {
+            // Auto-save once when the game ends
+            if (!this->auto_saved) {
+                const auto now = std::chrono::system_clock::now();
+                const std::time_t t = std::chrono::system_clock::to_time_t(now);
+                char buf[32];
+                std::strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", std::localtime(&t));
+                this->save_game(std::string(buf) + ".txt");
+                this->auto_saved = true;
+            }
             return;
+        }
 
         if ( this->board_state.is_whites_move() && this->white_is_ai ||
             !this->board_state.is_whites_move() && this->black_is_ai) {
@@ -131,6 +145,84 @@ void Game::rebuild_replay_board() {
     this->replay_board = BoardState{};
     for (std::size_t i = 0; i < this->review_cursor; i++) {
         this->replay_board.apply_move(this->move_history[i]);
+    }
+}
+
+// Convert an engine board index to "Letter+Number" notation (e.g. index -> "E4")
+static std::string index_to_notation(uint8_t index) {
+    const auto coords = Yngine::Bitboard::index_to_coords(index);
+    const int x = coords.first;
+    const int y = coords.second;
+    const char letter = static_cast<char>('A' + x + y - 5);
+    const int  number = y + 1;
+    return std::string(1, letter) + std::to_string(number);
+}
+
+// Convert a RemoveRowMove endpoint (from + 4 steps in direction) to notation
+static std::string row_end_notation(uint8_t from, Yngine::Direction dir) {
+    const uint8_t end_index = Yngine::Bitboard::index_move_direction(from, dir, 4);
+    return index_to_notation(end_index);
+}
+
+void Game::save_game(const std::string& path) {
+    std::ofstream f(path);
+    if (!f) return;
+
+    // Timestamp header
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t t = std::chrono::system_clock::to_time_t(now);
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", std::localtime(&t));
+    f << "# DATE " << buf << "\n";
+
+    // Player colour (human side)
+    f << "# PLAYER_COLOR " << (this->white_is_ai ? "Black" : "White") << "\n";
+
+    // Result — count rings on board to determine winner
+    const bool game_over = (this->board_state.get_next_action() == BoardState::NextAction::GameOver);
+    if (!game_over) {
+        f << "# RESULT Unfinished\n";
+    } else {
+        int white_rings = 0, black_rings = 0;
+        for (int32_t x = 0; x < 11; x++) {
+            for (int32_t y = 0; y < 11; y++) {
+                const auto pos = HVec2{x, y};
+                if (!this->board_state.is_in_game(pos)) continue;
+                const auto node = this->board_state.get_at(pos);
+                if (node == Node::WhiteRing) white_rings++;
+                else if (node == Node::BlackRing) black_rings++;
+            }
+        }
+        // Winner removed their last ring (now has 2); loser still has >= 3
+        if (white_rings < black_rings)
+            f << "# RESULT White\n";
+        else if (black_rings < white_rings)
+            f << "# RESULT Black\n";
+        else
+            f << "# RESULT Draw\n";
+    }
+
+    // Serialise each move
+    for (const auto& move : this->move_history) {
+        std::visit(Yngine::variant_overloaded{
+            [&](const Yngine::PlaceRingMove& m) {
+                f << "PLACE " << index_to_notation(m.index) << "\n";
+            },
+            [&](const Yngine::RingMove& m) {
+                f << "MOVE " << index_to_notation(m.from)
+                  << " "     << index_to_notation(m.to) << "\n";
+            },
+            [&](const Yngine::RemoveRowMove& m) {
+                f << "REMOVE_ROW " << index_to_notation(m.from)
+                  << " "           << row_end_notation(m.from, m.direction) << "\n";
+            },
+            [&](const Yngine::RemoveRingMove& m) {
+                f << "REMOVE_RING " << index_to_notation(m.index) << "\n";
+            },
+            [&](const Yngine::PassMove&) {
+                // No PASS line in format
+            },
+        }, move);
     }
 }
 
@@ -371,14 +463,16 @@ void Game::draw_review_bar() {
     const float label_w = 110.f;
     const int   font_sz = 16;
 
-    // Two rows: nav row + resume row
+    // Three rows:
     // Row 1: |< < [Move N/M] > >|
     // Row 2 (centred): [Resume Live]
+    // Row 3 (centred): [Save]
     const float row_gap  = 4.f;
+    const float save_w   = 60.f;
     const float panel_w  = margin + btn_w + padding + btn_w + padding
                          + label_w + padding + btn_w + padding + btn_w
                          + margin;
-    const float panel_h  = margin + btn_h + row_gap + btn_h + margin;
+    const float panel_h  = margin + btn_h + row_gap + btn_h + row_gap + btn_h + margin;
     const float panel_x  = margin;
     const float panel_y  = margin;
 
@@ -449,6 +543,19 @@ void Game::draw_review_bar() {
         this->review_cursor = total;
         this->rebuild_replay_board();
         this->state = State::Playing;
+    }
+    GuiSetState(STATE_NORMAL);
+
+    // --- Row 3: Save, centred in panel ---
+    const float save_x = panel_x + (panel_w - save_w) / 2.f;
+    const float save_y = rl_y + btn_h + row_gap;
+    if (this->move_history.empty()) GuiSetState(STATE_DISABLED);
+    if (GuiButton(Rectangle{save_x, save_y, save_w, btn_h}, "Save") && !this->move_history.empty()) {
+        const auto now = std::chrono::system_clock::now();
+        const std::time_t t = std::chrono::system_clock::to_time_t(now);
+        char buf[32];
+        std::strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", std::localtime(&t));
+        this->save_game(std::string(buf) + ".txt");
     }
     GuiSetState(STATE_NORMAL);
 }
