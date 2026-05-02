@@ -349,7 +349,7 @@ void Game::render() {
 void Game::draw_board() {
     const float line_thickness = 0.04f;
     const auto line_color = raylib::Color(0x383838FF);
-    const auto label_color = raylib::Color(0x383838FF);
+    const auto label_color = raylib::Color::White();
 
     // Font size in world units: target ~18px on screen regardless of zoom
     const float label_px = 18.f;
