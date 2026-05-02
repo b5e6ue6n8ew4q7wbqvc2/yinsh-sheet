@@ -78,6 +78,9 @@ void Game::update() {
     switch (this->state) {
     case State::ChoosingAISettings: {
     } break;
+    case State::Reviewing: {
+        // AI search continues in background; we just don't apply input or moves.
+    } break;
     case State::Playing: {
         if (this->board_state.get_next_action() == BoardState::NextAction::GameOver)
             return;
@@ -97,6 +100,9 @@ void Game::update() {
                     this->board_state.apply_move(move);
                     engine->apply_move(move);
 
+                    this->move_history.push_back(move);
+                    this->review_cursor = this->move_history.size();
+
                     this->engine_move = std::nullopt;
                 }
             }
@@ -111,10 +117,20 @@ void Game::update() {
                     if (this->engine) {
                         this->engine->apply_move(*move);
                     }
+
+                    this->move_history.push_back(*move);
+                    this->review_cursor = this->move_history.size();
                 }
             }
         }
     } break;
+    }
+}
+
+void Game::rebuild_replay_board() {
+    this->replay_board = BoardState{};
+    for (std::size_t i = 0; i < this->review_cursor; i++) {
+        this->replay_board.apply_move(this->move_history[i]);
     }
 }
 
@@ -327,7 +343,12 @@ void Game::render() {
     } break;
     case State::Playing: {
         this->camera.BeginMode();
-        this->draw_board();
+        this->draw_board(this->board_state);
+        this->camera.EndMode();
+    } break;
+    case State::Reviewing: {
+        this->camera.BeginMode();
+        this->draw_board(this->replay_board);
         this->camera.EndMode();
     } break;
     }
@@ -335,7 +356,7 @@ void Game::render() {
     EndDrawing();
 }
 
-void Game::draw_board() {
+void Game::draw_board(const BoardState& board) {
     const float line_thickness = 0.04f;
     const auto line_color = raylib::Color(0x383838FF);
     const auto label_color = raylib::Color::White();
@@ -436,9 +457,9 @@ void Game::draw_board() {
         for (int32_t y = 0; y < 11; y++) {
             const auto pos = HVec2{x, y};
 
-            if (this->board_state.is_in_game(pos)) {
+            if (board.is_in_game(pos)) {
                 const auto pos_world = to_vector2(pos.to_world());
-                const auto piece = this->board_state.get_at(pos);
+                const auto piece = board.get_at(pos);
 
                 switch (piece) {
                 case Node::WhiteRing: [[fallthrough]];

@@ -7,6 +7,7 @@
 
 #include <raylib-cpp.hpp>
 #include <optional>
+#include <vector>
 
 class Game {
 public:
@@ -24,16 +25,20 @@ private:
     enum class State {
         ChoosingAISettings,
         Playing,
+        Reviewing,
     };
 
     void update();
     std::optional<Yngine::Move> get_player_move();
 
     void render();
-    void draw_board();
+    void draw_board(const BoardState& board);
 
     // Update the camera parameters to get the correct view when window size changes
     void update_camera();
+
+    // Rebuild replay_board by replaying move_history[0..review_cursor)
+    void rebuild_replay_board();
 
     HVec2 get_mouse_hex_pos();
 
@@ -54,6 +59,11 @@ private:
     std::optional<HVec2> row_remove_from;
     // Used to draw the line player selected
     HVec2 row_remove_to;
+
+    // Move history and review state
+    std::vector<Yngine::Move> move_history;
+    std::size_t review_cursor = 0; // == move_history.size() when at live position
+    BoardState replay_board;       // re-derived board for review mode
 
     // Not null if we play against AI
     std::optional<Yngine::MCTS> engine;
