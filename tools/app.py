@@ -826,7 +826,7 @@ def main() -> None:
                 sheet = build_sheet(frames, spacing=cell_size, cols=cols, title=title)
 
                 # Display inline
-                st.image(sheet, caption="Game sheet", use_container_width=True)
+                st.image(sheet, caption="Game sheet", width='stretch')
 
                 # Download button — filename: "20260409_White_vs_Black.png"
                 def _fmt_date(d: str) -> str:
