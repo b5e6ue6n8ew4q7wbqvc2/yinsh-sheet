@@ -354,7 +354,7 @@ void Game::draw_board() {
     // Font size in world units: target ~18px on screen regardless of zoom
     const float label_px = 18.f;
     const float label_size = label_px / this->camera.zoom;
-    const float label_spacing = 1.f;
+    const float label_spacing = 0.f;
     const auto font = GetFontDefault();
 
     // Draw lines
@@ -390,10 +390,10 @@ void Game::draw_board() {
         const char letter[2] = { static_cast<char>('A' + i), '\0' };
         const auto text_size = MeasureTextEx(font, letter, label_size, label_spacing);
 
-        // Place centred horizontally, one node-spacing below
+        // Place centred horizontally, just below the bottom node
         const auto draw_pos = Vector2{
             world_pos.x - text_size.x / 2.f,
-            world_pos.y + 0.6f
+            world_pos.y + 0.15f
         };
         DrawTextEx(font, letter, draw_pos, label_size, label_spacing, label_color);
     }
@@ -406,9 +406,9 @@ void Game::draw_board() {
         const char* num_str = TextFormat("%i", row_y + 1);
         const auto text_size = MeasureTextEx(font, num_str, label_size, label_spacing);
 
-        // Place centred vertically, one node-spacing to the left
+        // Place centred vertically, just to the left of the leftmost node
         const auto draw_pos = Vector2{
-            world_pos.x - text_size.x - 0.5f,
+            world_pos.x - text_size.x - 0.15f,
             world_pos.y - text_size.y / 2.f
         };
         DrawTextEx(font, num_str, draw_pos, label_size, label_spacing, label_color);
