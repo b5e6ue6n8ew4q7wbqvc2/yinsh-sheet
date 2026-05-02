@@ -27,6 +27,8 @@ Game::Game()
     , state{Game::State::ChoosingAISettings}
     , white_is_ai{false}
     , black_is_ai{false}
+    , ai_move_time{1.f}
+    , place_ai_rings{false}
     , board_state{}
     , selected_ring{}
     , ring_moves{}
@@ -121,8 +123,12 @@ void Game::update() {
             return;
         }
 
-        if ( this->board_state.is_whites_move() && this->white_is_ai ||
-            !this->board_state.is_whites_move() && this->black_is_ai) {
+        const bool in_placement = this->board_state.get_next_action() == BoardState::NextAction::RingPlacement;
+        const bool ai_turn =
+            ( this->board_state.is_whites_move() && this->white_is_ai) ||
+            (!this->board_state.is_whites_move() && this->black_is_ai);
+
+        if (ai_turn && !(this->place_ai_rings && in_placement)) {
             assert(this->engine);
 
             if (!this->engine_move) {
@@ -394,6 +400,7 @@ void Game::reset_game() {
     this->engine_move     = std::nullopt;
     this->white_is_ai     = false;
     this->black_is_ai     = false;
+    this->place_ai_rings  = false;
     this->state           = State::ChoosingAISettings;
 }
 
@@ -578,8 +585,15 @@ void Game::render() {
         thread_count = static_cast<std::size_t>(thread_count_float);
         this->engine_thread_count = thread_count;
 
+        static bool place_ai_rings_checked = false;
+        GuiCheckBox(
+            Rectangle{window_size.x / 2 - 100, window_size.y / 2 + 100, 20, 20},
+            "Place AI rings manually",
+            &place_ai_rings_checked
+        );
+
         if (GuiButton(
-            Rectangle{window_size.x / 2 - 100, window_size.y / 2 + 100, 200, 30},
+            Rectangle{window_size.x / 2 - 100, window_size.y / 2 + 140, 200, 30},
             "Play"
         )) {
             if (color_selected == 0) {
@@ -591,6 +605,7 @@ void Game::render() {
             }
 
             this->ai_move_time = move_time;
+            this->place_ai_rings = place_ai_rings_checked;
 
             this->engine.emplace(memory_limit_mb * 1024 * 1024);
 
@@ -603,7 +618,7 @@ void Game::render() {
 
         if (!show_load_input) {
             if (GuiButton(
-                Rectangle{window_size.x / 2 - 100, window_size.y / 2 + 140, 200, 30},
+                Rectangle{window_size.x / 2 - 100, window_size.y / 2 + 180, 200, 30},
                 "Load Game"
             )) {
                 show_load_input = true;
@@ -612,7 +627,7 @@ void Game::render() {
             }
         } else {
             // Path text box
-            const float box_y = window_size.y / 2 + 140;
+            const float box_y = window_size.y / 2 + 180;
             GuiTextBox(
                 Rectangle{window_size.x / 2 - 150, box_y, 260, 30},
                 load_path, sizeof(load_path), true

@@ -61,6 +61,9 @@ private:
     bool white_is_ai;
     bool black_is_ai;
     float ai_move_time;
+    // When true, the human places *all* rings during the initial placement phase
+    // (including the AI's rings) so that custom openings can be tested.
+    bool place_ai_rings;
 
     BoardState board_state;
 
