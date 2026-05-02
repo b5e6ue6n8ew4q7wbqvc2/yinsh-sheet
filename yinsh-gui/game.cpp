@@ -40,12 +40,32 @@ Game::Game()
 void update_draw_frame(void* game_voidptr) {
     auto game = static_cast<Game*>(game_voidptr);
 
+#if defined(EMSCRIPTEN)
+    // Keep the raylib window in sync with the browser canvas each frame
+    const int cw = EM_ASM_INT({ return window.innerWidth; });
+    const int ch = EM_ASM_INT({ return window.innerHeight; });
+    if (cw > 0 && ch > 0 &&
+        (cw != game->window.GetWidth() || ch != game->window.GetHeight())) {
+        SetWindowSize(cw, ch);
+    }
+#endif
+
     game->update();
     game->render();
 }
 
 void Game::run() {
+#if defined(EMSCRIPTEN)
+    // On web, match the canvas to the browser window from the start
+    const int initial_w = EM_ASM_INT({ return window.innerWidth; });
+    const int initial_h = EM_ASM_INT({ return window.innerHeight; });
+    const auto initial_window_size = raylib::Vector2{
+        static_cast<float>(initial_w > 0 ? initial_w : 800),
+        static_cast<float>(initial_h > 0 ? initial_h : 600)
+    };
+#else
     const auto initial_window_size = raylib::Vector2{1280, 720};
+#endif
 
     SetConfigFlags(FLAG_MSAA_4X_HINT);
 
