@@ -7,7 +7,7 @@
 - **Remote `origin` must point to my repo**, not upstream.
 
 ## Project focus
-- We are only working on the Streamlit app: `tools/app.py`
+- We are only working on the Streamlit app: `app.py` (repo root)
 - The C++ game (`yinsh-gui/`, `extern/`) is not our concern.
 
 ## Workflow
