@@ -345,15 +345,104 @@ void Game::render() {
         this->camera.BeginMode();
         this->draw_board(this->board_state);
         this->camera.EndMode();
+        this->draw_review_bar();
     } break;
     case State::Reviewing: {
         this->camera.BeginMode();
         this->draw_board(this->replay_board);
         this->camera.EndMode();
+        this->draw_review_bar();
     } break;
     }
 
     EndDrawing();
+}
+
+void Game::draw_review_bar() {
+    const auto window_size = this->window.GetSize();
+
+    // Bar dimensions
+    const float bar_h    = 36.f;
+    const float bar_y    = window_size.y - bar_h;
+    const float btn_w    = 48.f;
+    const float btn_h    = 28.f;
+    const float btn_y    = bar_y + (bar_h - btn_h) / 2.f;
+    const float padding  = 8.f;
+
+    // Semi-transparent background
+    DrawRectangle(0, static_cast<int>(bar_y), static_cast<int>(window_size.x),
+                  static_cast<int>(bar_h), ColorAlpha(BLACK, 0.55f));
+
+    const std::size_t total = this->move_history.size();
+    const bool at_live = (this->review_cursor == total);
+
+    // Layout buttons from the centre outward
+    const float centre_x = window_size.x / 2.f;
+
+    // Move counter label: "Move N / M"
+    const char* counter = (total == 0)
+        ? "No moves yet"
+        : TextFormat("Move %zu / %zu", this->review_cursor, total);
+    const int font_size = 18;
+    const int text_w = MeasureText(counter, font_size);
+    const float label_x = centre_x - text_w / 2.f;
+    const float label_y = bar_y + (bar_h - font_size) / 2.f;
+    DrawText(counter, static_cast<int>(label_x), static_cast<int>(label_y),
+             font_size, WHITE);
+
+    // Buttons left of centre: |< and <
+    float bx = centre_x - text_w / 2.f - padding;
+
+    bx -= btn_w;
+    if (GuiButton(Rectangle{bx, btn_y, btn_w, btn_h}, "<")) {
+        if (this->review_cursor > 0) {
+            this->review_cursor--;
+            this->rebuild_replay_board();
+            this->state = State::Reviewing;
+        }
+    }
+
+    bx -= btn_w + padding;
+    if (GuiButton(Rectangle{bx, btn_y, btn_w, btn_h}, "|<")) {
+        if (this->review_cursor > 0) {
+            this->review_cursor = 0;
+            this->rebuild_replay_board();
+            this->state = State::Reviewing;
+        }
+    }
+
+    // Buttons right of centre: > and >|
+    bx = centre_x + text_w / 2.f + padding;
+
+    if (GuiButton(Rectangle{bx, btn_y, btn_w, btn_h}, ">")) {
+        if (!at_live) {
+            this->review_cursor++;
+            this->rebuild_replay_board();
+            if (this->review_cursor == total)
+                this->state = State::Playing;
+            // else stay Reviewing
+        }
+    }
+    bx += btn_w + padding;
+
+    if (GuiButton(Rectangle{bx, btn_y, btn_w, btn_h}, ">|")) {
+        if (!at_live) {
+            this->review_cursor = total;
+            this->rebuild_replay_board();
+            this->state = State::Playing;
+        }
+    }
+    bx += btn_w + padding;
+
+    // "Resume Live" button — only when not at live position
+    if (!at_live) {
+        const float rl_w = 110.f;
+        if (GuiButton(Rectangle{bx, btn_y, rl_w, btn_h}, "Resume Live")) {
+            this->review_cursor = total;
+            this->rebuild_replay_board();
+            this->state = State::Playing;
+        }
+    }
 }
 
 void Game::draw_board(const BoardState& board) {

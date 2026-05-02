@@ -33,6 +33,7 @@ private:
 
     void render();
     void draw_board(const BoardState& board);
+    void draw_review_bar();
 
     // Update the camera parameters to get the correct view when window size changes
     void update_camera();
