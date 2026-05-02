@@ -368,19 +368,18 @@ void Game::draw_review_bar() {
     const float btn_h   = 24.f;
     const int   font_sz = 16;
 
-    // Move counter label
+    // Move counter label — fixed width slot wide enough for "Move 999 / 999"
     const char* counter = (total == 0)
         ? "Move 0 / 0"
         : TextFormat("Move %zu / %zu", this->review_cursor, total);
-    const int label_w = MeasureText(counter, font_sz);
+    const float label_w = 120.f;
 
-    // Total panel width: |< < label > >| [Resume Live]
-    const float rl_w        = at_live ? 0.f : 90.f;
-    const float rl_gap      = at_live ? 0.f : padding;
+    // Total panel width: |< < [label] > >| [Resume Live]
+    const float rl_w        = 90.f;  // always reserved so panel never resizes
     const float panel_w     = btn_w + padding + btn_w + padding
                             + label_w + padding
                             + btn_w + padding + btn_w
-                            + rl_gap + rl_w
+                            + padding + rl_w
                             + margin * 2.f;
     const float panel_h     = btn_h + margin * 2.f;
     const float panel_x     = margin;
@@ -441,9 +440,9 @@ void Game::draw_review_bar() {
             this->state = State::Playing;
         }
     }
-    bx += btn_w + rl_gap;
+    bx += btn_w + padding;
 
-    // Resume Live button — only when rewound
+    // Resume Live button — only when rewound, but slot is always reserved
     if (!at_live) {
         if (GuiButton(Rectangle{bx, by, rl_w, btn_h}, "Resume Live")) {
             this->review_cursor = total;
