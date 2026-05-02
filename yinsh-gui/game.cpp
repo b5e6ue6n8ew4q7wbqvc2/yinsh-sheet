@@ -359,85 +359,93 @@ void Game::render() {
 }
 
 void Game::draw_review_bar() {
-    const auto window_size = this->window.GetSize();
+    const std::size_t total  = this->move_history.size();
+    const bool at_live       = (this->review_cursor == total);
 
-    // Bar dimensions
-    const float bar_h    = 36.f;
-    const float bar_y    = window_size.y - bar_h;
-    const float btn_w    = 48.f;
-    const float btn_h    = 28.f;
-    const float btn_y    = bar_y + (bar_h - btn_h) / 2.f;
-    const float padding  = 8.f;
+    const float margin  = 8.f;
+    const float padding = 4.f;
+    const float btn_w   = 36.f;
+    const float btn_h   = 24.f;
+    const int   font_sz = 16;
 
-    // Semi-transparent background
-    DrawRectangle(0, static_cast<int>(bar_y), static_cast<int>(window_size.x),
-                  static_cast<int>(bar_h), ColorAlpha(BLACK, 0.55f));
-
-    const std::size_t total = this->move_history.size();
-    const bool at_live = (this->review_cursor == total);
-
-    // Layout buttons from the centre outward
-    const float centre_x = window_size.x / 2.f;
-
-    // Move counter label: "Move N / M"
+    // Move counter label
     const char* counter = (total == 0)
-        ? "No moves yet"
+        ? "Move 0 / 0"
         : TextFormat("Move %zu / %zu", this->review_cursor, total);
-    const int font_size = 18;
-    const int text_w = MeasureText(counter, font_size);
-    const float label_x = centre_x - text_w / 2.f;
-    const float label_y = bar_y + (bar_h - font_size) / 2.f;
-    DrawText(counter, static_cast<int>(label_x), static_cast<int>(label_y),
-             font_size, WHITE);
+    const int label_w = MeasureText(counter, font_sz);
 
-    // Buttons left of centre: |< and <
-    float bx = centre_x - text_w / 2.f - padding;
+    // Total panel width: |< < label > >| [Resume Live]
+    const float rl_w        = at_live ? 0.f : 90.f;
+    const float rl_gap      = at_live ? 0.f : padding;
+    const float panel_w     = btn_w + padding + btn_w + padding
+                            + label_w + padding
+                            + btn_w + padding + btn_w
+                            + rl_gap + rl_w
+                            + margin * 2.f;
+    const float panel_h     = btn_h + margin * 2.f;
+    const float panel_x     = margin;
+    const float panel_y     = margin;
 
-    bx -= btn_w;
-    if (GuiButton(Rectangle{bx, btn_y, btn_w, btn_h}, "<")) {
-        if (this->review_cursor > 0) {
-            this->review_cursor--;
-            this->rebuild_replay_board();
-            this->state = State::Reviewing;
-        }
-    }
+    // Background
+    DrawRectangleRounded(
+        Rectangle{panel_x, panel_y, panel_w, panel_h},
+        0.3f, 8, ColorAlpha(BLACK, 0.60f));
 
-    bx -= btn_w + padding;
-    if (GuiButton(Rectangle{bx, btn_y, btn_w, btn_h}, "|<")) {
+    // Start laying out from left edge of panel interior
+    float bx = panel_x + margin;
+    const float by = panel_y + (panel_h - btn_h) / 2.f;
+
+    // |< button
+    if (GuiButton(Rectangle{bx, by, btn_w, btn_h}, "|<")) {
         if (this->review_cursor > 0) {
             this->review_cursor = 0;
             this->rebuild_replay_board();
             this->state = State::Reviewing;
         }
     }
+    bx += btn_w + padding;
 
-    // Buttons right of centre: > and >|
-    bx = centre_x + text_w / 2.f + padding;
+    // < button
+    if (GuiButton(Rectangle{bx, by, btn_w, btn_h}, "<")) {
+        if (this->review_cursor > 0) {
+            this->review_cursor--;
+            this->rebuild_replay_board();
+            this->state = State::Reviewing;
+        }
+    }
+    bx += btn_w + padding;
 
-    if (GuiButton(Rectangle{bx, btn_y, btn_w, btn_h}, ">")) {
+    // Move counter label, centred vertically
+    DrawText(counter,
+             static_cast<int>(bx),
+             static_cast<int>(by + (btn_h - font_sz) / 2.f),
+             font_sz, WHITE);
+    bx += label_w + padding;
+
+    // > button
+    if (GuiButton(Rectangle{bx, by, btn_w, btn_h}, ">")) {
         if (!at_live) {
             this->review_cursor++;
             this->rebuild_replay_board();
             if (this->review_cursor == total)
                 this->state = State::Playing;
-            // else stay Reviewing
         }
     }
     bx += btn_w + padding;
 
-    if (GuiButton(Rectangle{bx, btn_y, btn_w, btn_h}, ">|")) {
+    // >| button
+    if (GuiButton(Rectangle{bx, by, btn_w, btn_h}, ">|")) {
         if (!at_live) {
             this->review_cursor = total;
             this->rebuild_replay_board();
             this->state = State::Playing;
         }
     }
-    bx += btn_w + padding;
+    bx += btn_w + rl_gap;
 
-    // "Resume Live" button — only when not at live position
+    // Resume Live button — only when rewound
     if (!at_live) {
-        const float rl_w = 110.f;
-        if (GuiButton(Rectangle{bx, btn_y, rl_w, btn_h}, "Resume Live")) {
+        if (GuiButton(Rectangle{bx, by, rl_w, btn_h}, "Resume Live")) {
             this->review_cursor = total;
             this->rebuild_replay_board();
             this->state = State::Playing;
