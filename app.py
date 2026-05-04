@@ -638,10 +638,14 @@ def _node_pos(x: int, y: int, spacing: float) -> tuple[float, float]:
 
 
 def _load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    import glob as _glob
     for path in [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        # Nix store paths (glob for any version)
+        *sorted(_glob.glob("/nix/store/*/share/fonts/truetype/DejaVuSans.ttf")),
+        *sorted(_glob.glob("/nix/store/*/share/fonts/truetype/calibri.ttf")),
     ]:
         try:
             return ImageFont.truetype(path, size)
