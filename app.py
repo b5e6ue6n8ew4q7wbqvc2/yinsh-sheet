@@ -833,7 +833,7 @@ def build_sheet(frames: list[Frame],
     cell_w       = bw + border * 2
     cell_h       = bh + caption_height + border * 2
     gap          = 4
-    title_height = 48 if title else 0
+    title_height = 64 if title else 0
     sheet_w      = cols * cell_w + (cols - 1) * gap + gap * 2
     sheet_h      = rows * cell_h + (rows - 1) * gap + gap * 2 + title_height
 
@@ -841,11 +841,11 @@ def build_sheet(frames: list[Frame],
     draw  = ImageDraw.Draw(sheet)
 
     if title:
-        title_font = _load_font(28)
-        # Draw title text centred at top
+        title_font = _load_font(36)
+        # Draw title text left-aligned at top
         draw.text(
-            (sheet_w // 2, title_height // 2),
-            title, fill="#111111", font=title_font, anchor="mm",
+            (gap * 2, title_height // 2),
+            title, fill="#111111", font=title_font, anchor="lm",
         )
         # Thin separator line under the title
         draw.line(
