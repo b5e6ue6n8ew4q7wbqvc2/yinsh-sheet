@@ -65,7 +65,6 @@ private:
     // (including the AI's rings) so that custom openings can be tested.
     bool place_ai_rings;
     bool blitz_mode;
-    bool three_stone_mode;
 
     BoardState board_state;
 

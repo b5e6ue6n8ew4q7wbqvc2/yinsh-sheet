@@ -402,7 +402,6 @@ void Game::reset_game() {
     this->black_is_ai     = false;
     this->place_ai_rings  = false;
     this->blitz_mode      = false;
-    this->three_stone_mode = false;
     this->state           = State::ChoosingAISettings;
 }
 
@@ -594,11 +593,7 @@ void Game::render() {
             &place_ai_rings_checked
         );
 
-        static bool three_stone_checked = false;
         static bool blitz_checked = false;
-
-        // 3-stone blitz always implies blitz
-        if (three_stone_checked) blitz_checked = true;
 
         GuiCheckBox(
             Rectangle{window_size.x / 2 - 100, window_size.y / 2 + 130, 20, 20},
@@ -606,14 +601,8 @@ void Game::render() {
             &blitz_checked
         );
 
-        GuiCheckBox(
-            Rectangle{window_size.x / 2 - 100, window_size.y / 2 + 160, 20, 20},
-            "3-stone blitz (3 rings per player)",
-            &three_stone_checked
-        );
-
         if (GuiButton(
-            Rectangle{window_size.x / 2 - 100, window_size.y / 2 + 200, 200, 30},
+            Rectangle{window_size.x / 2 - 100, window_size.y / 2 + 170, 200, 30},
             "Play"
         )) {
             if (color_selected == 0) {
@@ -627,17 +616,14 @@ void Game::render() {
             this->ai_move_time = move_time;
             this->place_ai_rings = place_ai_rings_checked;
             this->blitz_mode = blitz_checked;
-            this->three_stone_mode = three_stone_checked;
 
-            if (three_stone_checked) {
-                // 3-stone blitz: 3 rings per player, win when 2 remain (1 removed)
-                this->board_state.set_mode(3, 2);
-            } else if (blitz_checked) {
-                // Blitz: 5 rings per player, win when 4 remain (1 removed)
-                this->board_state.set_mode(5, 4);
+
+            if (blitz_checked) {
+                // Blitz: win when 4 rings remain (1 row removed)
+                this->board_state.set_mode(4);
             } else {
-                // Standard: 5 rings per player, win when 2 remain (3 removed)
-                this->board_state.set_mode(5, 2);
+                // Standard: win when 2 rings remain (3 rows removed)
+                this->board_state.set_mode(2);
             }
 
             this->engine.emplace(memory_limit_mb * 1024 * 1024);
@@ -651,7 +637,7 @@ void Game::render() {
 
         if (!show_load_input) {
             if (GuiButton(
-                Rectangle{window_size.x / 2 - 100, window_size.y / 2 + 240, 200, 30},
+                Rectangle{window_size.x / 2 - 100, window_size.y / 2 + 210, 200, 30},
                 "Load Game"
             )) {
                 show_load_input = true;
@@ -660,7 +646,7 @@ void Game::render() {
             }
         } else {
             // Path text box
-            const float box_y = window_size.y / 2 + 240;
+            const float box_y = window_size.y / 2 + 210;
             GuiTextBox(
                 Rectangle{window_size.x / 2 - 150, box_y, 260, 30},
                 load_path, sizeof(load_path), true
