@@ -66,6 +66,12 @@ public:
     bool is_move_legal(Yngine::Move move) const;
     void apply_move(Yngine::Move move);
 
+    // Configure game mode before play begins.
+    // rings_per_player: how many rings each side starts with (default 5).
+    // win_rings_remaining: rings left on board that trigger a win (default 2,
+    //   meaning 3 rows removed from 5 rings; blitz uses 4 = 1 row removed).
+    void set_mode(int rings_per_player, int win_rings_remaining);
+
     std::vector<HVec2> get_ring_moves(HVec2 pos) const;
 
 private:
@@ -89,6 +95,9 @@ private:
 
     int white_rings_on_board = 0;
     int black_rings_on_board = 0;
+
+    int rings_per_player = 5;
+    int win_rings_remaining = 2;
 
     HVec2 last_move_from;
     HVec2 last_move_to;

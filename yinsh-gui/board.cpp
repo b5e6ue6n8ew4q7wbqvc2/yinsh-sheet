@@ -51,7 +51,7 @@ Node BoardState::get_at(HVec2 pos) const {
 }
 
 void BoardState::place_ring(HVec2 pos) {
-    assert(this->white_rings_on_board + this->black_rings_on_board < 10);
+    assert(this->white_rings_on_board + this->black_rings_on_board < this->rings_per_player * 2);
     assert(this->storage.at(pos) == Node::Empty);
 
     this->storage.at(pos) = this->white_moves_next ? Node::WhiteRing : Node::BlackRing;
@@ -61,7 +61,7 @@ void BoardState::place_ring(HVec2 pos) {
     else
         this->black_rings_on_board++;
 
-    if (this->black_rings_on_board == 5) {
+    if (this->black_rings_on_board == this->rings_per_player) {
         this->next_action = NextAction::RingMovement;
     }
 
@@ -404,6 +404,11 @@ int BoardState::number_of_markers_on_the_board() const {
     return result;
 }
 
+void BoardState::set_mode(int rings_per_player, int win_rings_remaining) {
+    this->rings_per_player = rings_per_player;
+    this->win_rings_remaining = win_rings_remaining;
+}
+
 void BoardState::remove_ring(HVec2 pos) {
     this->storage.at(pos) = Node::Empty;
 
@@ -413,8 +418,8 @@ void BoardState::remove_ring(HVec2 pos) {
         this->black_rings_on_board--;
     }
 
-    if (this->white_rings_on_board == 2 ||
-        this->black_rings_on_board == 2) {
+    if (this->white_rings_on_board == this->win_rings_remaining ||
+        this->black_rings_on_board == this->win_rings_remaining) {
         this->next_action = NextAction::GameOver;
     } else {
         check_for_rows_and_change_state(this->last_move_from, this->last_move_to);
