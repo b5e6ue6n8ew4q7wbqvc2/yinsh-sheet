@@ -46,7 +46,7 @@ nix-shell -p emscripten cmake ninja python3 --run "
 # Package for itch.io
 cd build-web/yinsh-gui
 cp Yinsh-gui.html index.html
-zip ~/yinsh-web.zip index.html Yinsh-gui.js Yinsh-gui.wasm
+zip ../../yinsh-web.zip index.html Yinsh-gui.js Yinsh-gui.wasm
 ```
 
 Upload `yinsh-web.zip` to itch.io as HTML5 with **SharedArrayBuffer support** enabled.
