@@ -5,7 +5,7 @@ Training-focused improvements: play vs AI, rewind/review moves, save and reload 
 and visually export games as an image sheet.
 
 ## Decisions Made
-- **UI:** AI-only mode (removed Player vs Player)
+- **UI:** Mode-selection screen — Player vs Player or Player vs AI; PvP includes a Blitz mode checkbox
 - **Save format:** Plain text using standard board notation (e.g. `E4`)
 - **Export:** Streamlit app (`app.py`) reads a BGA log or native save file and
   produces a PNG image sheet — **done and deployed**
@@ -23,9 +23,9 @@ and visually export games as an image sheet.
 - White colour, offset just outside the outermost valid node of each line
 
 ### Phase 1 — Streamline UI ✅
-- Removed "Player vs Player" mode and the `ChoosingMode` state entirely
-- First screen is the AI settings screen directly (color pick, time, memory, threads)
-- "Load Game" button on the settings screen to enter review mode from a saved file
+- Initial `ChoosingMode` screen: "Player vs Player" (with Blitz checkbox) or "Player vs AI"
+- PvP goes directly to `Playing`; AI path leads to the settings screen (color pick, time, memory, threads)
+- "Load Game" button on both screens to enter review mode from a saved file
 
 ### Phase 2 — Move History ✅
 - `std::vector<Yngine::Move> move_history` added to `Game`
@@ -38,7 +38,7 @@ and visually export games as an image sheet.
 - Row 1: `|<` jump to start, `<` one move back, `Move N / M` counter, `>` one move forward, `>|` jump to end
 - Row 2: "Resume Live" button (disabled when already at live position)
 - Row 3: "Save" button (disabled when no moves made)
-- Row 4: "New Game" button — resets all state and returns to the settings screen
+    - Row 4: "New Game" button — resets all state and returns to the mode-selection screen
 - Navigation buttons disabled (greyed) rather than hidden when not applicable
 
 ### Phase 4 — Save Game ✅
@@ -53,6 +53,17 @@ and visually export games as an image sheet.
 
 ### New Game Button ✅
 - "New Game" in the review panel resets board, history, engine, and returns to the settings screen
+
+---
+
+## Upstream Contribution ✅ PR Open
+
+All C++ game changes have been contributed back to the upstream project via a pull request.
+
+- **PR**: https://github.com/temhelk/yinsh/pull/2
+- **Branch**: `feature/review-save-blitz-pvp` in fork `b5e6ue6n8ew4q7wbqvc2/yinsh`
+- **Targets**: `temhelk/blitz` (builds on top of their existing blitz branch)
+- **Remotes in this repo**: `temhelk` → upstream, `myfork` → `b5e6ue6n8ew4q7wbqvc2/yinsh`
 
 ---
 

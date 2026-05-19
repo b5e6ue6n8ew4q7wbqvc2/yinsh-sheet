@@ -2,8 +2,10 @@
 
 ## GitHub
 - **My account**: b5e6ue6n8ew4q7wbqvc2
-- **My repo**: https://github.com/b5e6ue6n8ew4q7wbqvc2/yinsh-sheet
-- **Upstream (read-only)**: https://github.com/temhelk/yinsh
+- **My repo (this one)**: https://github.com/b5e6ue6n8ew4q7wbqvc2/yinsh-sheet
+- **Upstream**: https://github.com/temhelk/yinsh
+- **My fork of upstream**: https://github.com/b5e6ue6n8ew4q7wbqvc2/yinsh (proper GitHub fork for PRs)
+- **Open PR**: https://github.com/temhelk/yinsh/pull/2 — feature branch `feature/review-save-blitz-pvp` targeting `temhelk/blitz`
 - **Remote `origin` must point to my repo**, not upstream.
 
 ## Project focus
